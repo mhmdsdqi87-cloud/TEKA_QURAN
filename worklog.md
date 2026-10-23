@@ -126,3 +126,23 @@ Stage Summary:
 - سایت لایو: https://teka-quran.vercel.app | ریپو: https://github.com/mhmdsdqi87-cloud/TEKA_QURAN
 - محدودیت: SQLite روی ورکل موقتی است (با cold start ریست می‌شود) — برای دائمی شدن: Turso/Neon
 - توکن‌ها فقط در همین نشست استفاده شدند و در هیچ فایلی ذخیره نشدند؛ توصیه: چرخاندن (revoke) هر دو توکن پس از این مرحله
+
+---
+Task ID: 14 (iteration 5)
+Agent: main (Z.ai Code)
+Task: درخواست پنجم کاربر — اتصال Turso، رفع خرابی ورود/ثبت‌نام، معلم تحفیظ واقعی‌تر و قوی‌تر
+
+Work Log:
+- ریشه‌یابی باگ «گزینه‌های ورود و ثبت‌نام تشکیل نمی‌شوند»: کلاس سفارشی gold-border-glow با position:relative بیرون از cascade layer تعریف شده بود و بر position:fixed ابزار Tailwind (در @layer utilities) اولویت می‌گرفت → DialogContent و پنل چت به‌جای fixed در جریان سند رندر و از دید خارج می‌شدند. ریشه‌یابی با getComputedStyle (position:relative, top:2251px) اثبات شد.
+- رفع: انتقال .gold-border-glow به @layer components در globals.css (برای کارت‌های معمولی relative می‌ماند، برای fixed/absolute ابزار برنده می‌شود) + محکم‌کاری دیالوگ با max-h-[92svh] overflow-y-auto
+- Turso: نصب @libsql/client + @prisma/adapter-libsql@6.11.1 (نسخهٔ هماهنگ)؛ db.ts با درایور ادبتر وقتی TURSO_DATABASE_URL+TURSO_AUTH_TOKEN ست باشند، فالبک امن به SQLite محلی؛ scripts/turso-migrate.ts (اسکیما + کپی idempotent User/AuthToken/Session) و scripts/driver-smoke.ts
+- توکن ارسالی کاربر توکن پلتفرم بود (org_id) → با API پلتفرم تورسو (api.turso.tech) توکن دیتابیس برای tekaquran ساخته شد؛ مهاجرت واقعی: ۲ کاربر/۱ توکن/۳ جلسه کپی شد
+- معلم تحفیظ: src/lib/teacher.ts — استخراج پروفایل واقعی (جلسات، میانگین/بهترین دقت، استریک، سوره‌های ضعیف/قوی، خطاهای اخیر از mistakes JSON، جلسهٔ آخر)؛ /api/chat با پرامپت ۴ حوزهٔ تخصص + پروفایل + thinking enabled؛ /api/analyze با پروفایل + خروجی جدید grade و plan؛ کارت «نظر معلم»: چیپ نمرهٔ رنگی + بخش «برنامهٔ تمرین معلم»
+- UX ورود: دکمهٔ «ورود / ثبت‌نام» در هیرو برای مهمان‌ها
+- E2E محلی: ثبت‌نام از دیالوگ (کلیک فیزیکی سوییچ تب سالم)، کاربر مستقیماً در Turso ساخته شد، چت با نام کاربر و برنامهٔ هفتگی جواب داد، جلسهٔ شبیه‌سازی‌شده → کارت نظر (نمرهٔ «خوب» + برنامهٔ تمرین) + ذخیره در Turso
+- دیپلوی: rebase روی README.md ویرایش‌شدهٔ خود کاربر در گیت‌هاب، پوش با نام mohammad → https://github.com/mhmdsdqi87-cloud/TEKA_QURAN ; envهای TURSO_DATABASE_URL/TURSO_AUTH_TOKEN روی Production+Preview ورکل؛ دیپلوی → https://teka-quran.vercel.app
+- راستی‌آزمایی production: ثبت‌نام → رکورد در Turso ابری ✓، لاگین مجدد ✓، موبایل ۳۹۰px دیالوگ fixed و داخل صفحه ✓، صفر خطای کنسول ✓؛ کاربران آزمایشی پاک شدند
+
+Stage Summary:
+- دیتابیس اکنون پایدار است (حساب‌ها و آمار با cold-start ورکل پاک نمی‌شوند)؛ باگ ریشه‌ای دیالوگ/چت رفع شد؛ استاد چت و تحلیل شخصی‌سازی‌شده و قوی‌تر شد؛ lint/tsc پاک
+- امنیت: توکن پلتفرم تورسو + PAT گیت‌هاب + توکن ورکل در چت مطرح شده‌اند → به کاربر توصیهٔ چرخاندن هر سه توکن
