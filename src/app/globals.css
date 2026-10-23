@@ -160,8 +160,13 @@
   box-shadow: 0 10px 40px -18px oklch(0 0 0 / 45%), inset 0 1px 0 oklch(0.9 0.05 95 / 8%);
 }
 
-.gold-border-glow {
-  position: relative;
+/* ⚠️ این کلاس باید در لایهٔ components باشد؛ اگر بیرون لایه باشد
+   position:relative آن بر position:fixed ابزارهای Tailwind (مثل دیالوگ)
+   اولویت می‌گیرد و دیالوگ به‌جای fixed در جریان صفحه رندر می‌شود! */
+@layer components {
+  .gold-border-glow {
+    position: relative;
+  }
 }
 .gold-border-glow::before {
   content: "";
