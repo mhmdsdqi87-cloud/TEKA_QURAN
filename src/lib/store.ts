@@ -80,6 +80,14 @@ export interface StudioState {
 
 let msgCounter = 0;
 
+/** سقف پیام‌های بازخورد — جلوگیری از شلوغی/کندی رابط در جلسه‌های بلند */
+const FEEDBACK_CAP = 60;
+
+function appendFeedback(list: FeedbackMsg[], msg: FeedbackMsg): FeedbackMsg[] {
+  const next = [...list, msg];
+  return next.length > FEEDBACK_CAP ? next.slice(next.length - FEEDBACK_CAP) : next;
+}
+
 const emptyState = {
   surah: null,
   fromAyah: 1,
@@ -162,18 +170,24 @@ export const useStudio = create<StudioState>((set, get) => ({
     const s = get();
     if (!text.trim() || s.track.length === 0) return;
     set({ preview: null }); // نتیجهٔ نهایی، پیش‌نمایش را جایگزین می‌کند
+
+    // ضدتکرار دوم: همان متن پشت‌سرهم با فاصلهٔ خیلی کم را نادیده بگیر
+    // (در کنار ضدتکرار داخل موتور — ایمنی مضاعف برای اندروید)
+    const lastSeg = s.heardSegments[s.heardSegments.length - 1];
+    if (lastSeg && lastSeg.trim() === text.trim() && s.feedback.length > 0) {
+      const lastFb = s.feedback[s.feedback.length - 1];
+      if (Date.now() - lastFb.at < 800) return;
+    }
+
     if (s.pos >= s.track.length) {
       set({
         heardSegments: [...s.heardSegments, text],
-        feedback: [
-          ...s.feedback,
-          {
-            id: `m${++msgCounter}`,
-            kind: "info",
-            text: `شنیدم: «${text}» — اما بازهٔ انتخابی تمام شده است. اگر ادامه می‌دهی، بازهٔ جدید انتخاب کن.`,
-            at: Date.now(),
-          },
-        ],
+        feedback: appendFeedback(s.feedback, {
+          id: `m${++msgCounter}`,
+          kind: "info",
+          text: `شنیدم: «${text}» — اما بازهٔ انتخابی تمام شده است. اگر ادامه می‌دهی، بازهٔ جدید انتخاب کن.`,
+          at: Date.now(),
+        }),
       });
       return;
     }
@@ -275,7 +289,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       track,
       pos: res.newPos,
       mistakes: [...s.mistakes, ...newMistakes],
-      feedback: fb,
+      feedback: fb.length > FEEDBACK_CAP ? fb.slice(fb.length - FEEDBACK_CAP) : fb,
       accuracy: stats.accuracy,
       wordsCorrect: stats.correct,
       lastAlignQuality: res.quality,
@@ -285,7 +299,10 @@ export const useStudio = create<StudioState>((set, get) => ({
 
   pushFeedback: (msg) =>
     set((s) => ({
-      feedback: [...s.feedback, { ...msg, id: `m${++msgCounter}`, at: Date.now() }],
+      feedback: appendFeedback(
+        s.feedback,
+        { ...msg, id: `m${++msgCounter}`, at: Date.now() }
+      ),
     })),
 
   tick: () =>

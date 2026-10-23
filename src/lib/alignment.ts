@@ -74,18 +74,33 @@ export function tokenize(text: string): string[] {
 
 /**
  * هم‌سازی املای عثمانی با املای متداولی که ASR تولید می‌کند.
+ * مهم: کلیدها و مقادیر باید «بعد از» نرمال‌سازی باشند (چون canonWord بعد از normalizeArabic صدا می‌شود).
  * مثلاً «الرحمان» (عثمانی با الف خنجی) ↔ «الرحمن» (متداول)
  */
 const CANON: Record<string, string> = {
   الرحمان: "الرحمن",
-  صلاوة: "صلاة",
-  الحيوة: "الحياة",
-  زكوة: "زكاة",
+  صلاوه: "صلاه", // صلاوة (عثمانی) ↔ صلاة
+  الحيوه: "الحياه", // الحيوة (عثمانی) ↔ الحياة
+  زكوه: "زكاه", // زكوة (عثمانی) ↔ زكاة
   هاذا: "هذا",
   هاذه: "هذه",
-  هاؤلاء: "هؤلاء",
+  هاولا: "هولا", // هاؤلاء ↔ هؤلاء
   الطوار: "الطور",
 };
+
+/**
+ * حذف «ال» تعریف و حروف افزودنی پیشین برای مقایسهٔ نرم‌تر.
+ * ASR (به‌خصوص گوگل عربی) اغلب «ال» ابتدای کلمه را حذف می‌کند:
+ * «الناس» شنیده‌شده «ناس» — بدون این کار کلمهٔ درست اشتباه شمرده می‌شد.
+ */
+const EL_PREFIXES = ["وال", "فال", "بال", "كال", "لل", "ال"] as const;
+
+function stripEl(w: string): string {
+  for (const p of EL_PREFIXES) {
+    if (w.startsWith(p) && w.length - p.length >= 3) return w.slice(p.length);
+  }
+  return w;
+}
 
 function canonWord(w: string): string {
   return CANON[w] ?? w;
@@ -114,14 +129,31 @@ export function levenshtein(a: string, b: string, max = 3): number {
   return prev[lb];
 }
 
-/** شباهت دو کلمهٔ نرمال‌شده 0..1 */
+/** شباهت دو کلمهٔ نرمال‌شده 0..1 — با تحمل «ال» تعریف و کلمهٔ ناقص */
 export function wordSimilarity(a: string, b: string): number {
   if (!a || !b) return 0;
   if (a === b) return 1;
   const maxLen = Math.max(a.length, b.length);
   if (maxLen <= 2) return a === b ? 1 : 0;
-  const d = levenshtein(a, b, Math.ceil(maxLen / 2));
-  return Math.max(0, 1 - d / maxLen);
+  let best = Math.max(0, 1 - levenshtein(a, b, Math.ceil(maxLen / 2)) / maxLen);
+
+  // مقایسه بدون «ال» تعریف — رایج‌ترین خطای ASR عربی
+  const sa = stripEl(a);
+  const sb = stripEl(b);
+  if (sa !== a || sb !== b) {
+    if (sa === sb) return 0.97;
+    const maxLen2 = Math.max(sa.length, sb.length);
+    if (maxLen2 > 0) {
+      best = Math.max(best, 0.97 * Math.max(0, 1 - levenshtein(sa, sb, Math.ceil(maxLen2 / 2) + 1) / maxLen2));
+    }
+  }
+
+  // کلمهٔ کوتاه‌تر داخل بلندتر (ASR گاهی کلمه را ناقص می‌نویسد)
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (shorter.length >= 3 && longer.includes(shorter)) {
+    best = Math.max(best, (shorter.length / longer.length) * 0.9);
+  }
+  return Math.min(1, best);
 }
 
 /* ------------------------------------------------------------------ */
@@ -165,6 +197,8 @@ function dpAlign(
   preset: AlignPreset = STRICTNESS_PRESETS.normal
 ): { ops: PathOp[]; scoreSum: number; matches: number } {
   const m = seg.length;
+  // پاداش پیشروی: قطعهٔ کوتاه مبهم نباید انگیزهٔ پرش چندکلمه‌ای داشته باشد
+  const progressReward = m >= 5 ? 0.05 : m >= 3 ? 0.028 : 0.012;
   const n = window.length;
   const INF = 1e9;
   // dp[i][j]: هزینه تا مصرف i کلمهٔ شنیده و j کلمهٔ مورد انتظار
@@ -204,7 +238,7 @@ function dpAlign(
   let bestJ = 0;
   let bestCost = INF;
   for (let j = 0; j <= n; j++) {
-    const c = dp[m][j] - j * 0.05; // پاداش پیشروی
+    const c = dp[m][j] - j * progressReward; // پاداش پیشروی (وابسته به طول قطعه)
     if (c < bestCost) {
       bestCost = c;
       bestJ = j;
@@ -293,11 +327,15 @@ export function alignSegment(
   const backStart = Math.max(0, pos - 18);
   let back: ReturnType<typeof dpAlign> | null = null;
   let backQuality = 0;
+  const fwdMatches = countMatches(fwd.ops, preset);
   if (backStart < pos && pos - backStart >= 4) {
     const bWin = track.slice(backStart, pos);
     const b = dpAlign(segNorm, segNorm, bWin, backStart, preset);
     backQuality = b.matches > 0 ? b.scoreSum / b.matches : 0;
-    if (backQuality > fwdQuality + 0.12) back = b;
+    const backMatches = countMatches(b.ops, preset);
+    // تکرار: اگر در پنجرهٔ عقب تطبیق‌های بیشتری داریم (مثلاً کاربر آیه را از نو خواند)،
+    // مسیر عقب‌رو را انتخاب کن — نه یک تطبیق تکیِ پرش‌دار در جلو
+    if (backQuality > fwdQuality + 0.12 || (backMatches >= 3 && backMatches > fwdMatches)) back = b;
   }
 
   const chosen = back ?? fwd;
@@ -310,6 +348,23 @@ export function alignSegment(
       inserted: segRaw,
       quality: chosenQuality,
     };
+  }
+
+  // ——— محافظ ضدپرش (رفع «همه‌چی اشتباه شد» در اندروید) ———
+  // خشک‌پیمایی: قبل از دست‌زدن به وضعیت، ببین مسیر انتخابی چند کلمه جلو می‌رود.
+  // پرش بزرگ‌تر از طول قطعه با کمتر از دو تطبیق معتبر یعنی مسیر اشتباه است
+  // (مثلاً یک کلمهٔ پرتکرار مثل «الله» خیلی جلوتر مچ شده) — رد کن تا همهٔ
+  // کلمات بین راه غلط شمرده نشوند.
+  let dryPos = pos;
+  let dryGoodMatches = 0;
+  for (const op of chosen.ops) {
+    if (op.kind === "match" && op.expectedIdx !== undefined) {
+      if (op.score !== undefined && op.score >= preset.fuzzyAccept) dryGoodMatches++;
+      if (op.expectedIdx + 1 > dryPos) dryPos = op.expectedIdx + 1;
+    }
+  }
+  if (dryPos - pos > segNorm.length + 4 && dryGoodMatches < 2) {
+    return { ...empty, inserted: segRaw, quality: chosenQuality };
   }
 
   let newPos = pos;

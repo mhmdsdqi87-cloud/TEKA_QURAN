@@ -70,6 +70,35 @@ const GRADE_STYLES: Record<string, string> = {
   "نیاز به تمرین": "border-red-500/40 bg-red-500/10 text-red-500",
 };
 
+/* ---------- قفل روشن‌ماندن صفحه (اندروید هنگام تلاوت صفحه را خاموش می‌کند) ---------- */
+interface WakeLockSentinelLike {
+  released: boolean;
+  release(): Promise<void>;
+}
+let wakeLockRef: WakeLockSentinelLike | null = null;
+
+async function requestWakeLock() {
+  try {
+    const nav = navigator as unknown as {
+      wakeLock?: { request(type: "screen"): Promise<WakeLockSentinelLike> };
+    };
+    if (nav.wakeLock && !wakeLockRef) {
+      wakeLockRef = await nav.wakeLock.request("screen");
+    }
+  } catch {
+    /* پشتیبانی نمی‌شود — مهم نیست */
+  }
+}
+
+function releaseWakeLock() {
+  try {
+    void wakeLockRef?.release();
+  } catch {
+    /* ignore */
+  }
+  wakeLockRef = null;
+}
+
 export default function RecitationStudio() {
   const { toast } = useToast();
   const st = useStudio();
@@ -100,12 +129,22 @@ export default function RecitationStudio() {
   const queueRef = useRef<string[]>([]);
   const processingRef = useRef(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const engineReviveRef = useRef(0);
   const savedRef = useRef(false);
   const lastPreviewAtRef = useRef(0);
+  const previewThrottleRef = useRef(100);
   const [browserSpeech, setBrowserSpeech] = useState<boolean | null>(null);
 
   useEffect(() => {
     setBrowserSpeech(isBrowserSpeechSupported());
+    // گوشی‌ها: پیش‌نمایش زنده سبک‌تر اجرا شود (کم‌توان‌تر از دسکتاپ)
+    try {
+      const coarse = window.matchMedia("(pointer: coarse)").matches;
+      previewThrottleRef.current = coarse ? 220 : 100;
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   /* ---------- بارگذاری فهرست سوره‌ها (با کش اسپلش) ---------- */
@@ -232,6 +271,42 @@ export default function RecitationStudio() {
     setMics(list);
   }, []);
 
+  /* ---------- چرخ حیات موتور: اگر اندروید موتور را کشت، زنده‌اش می‌کنیم ---------- */
+  const startWatchdog = useCallback(() => {
+    if (watchdogRef.current) clearInterval(watchdogRef.current);
+    engineReviveRef.current = 0;
+    watchdogRef.current = setInterval(() => {
+      const eng = engineRef.current;
+      if (!eng) return;
+      const phase = useStudio.getState().phase;
+      if (phase !== "recording") return;
+      if (!eng.running) {
+        engineReviveRef.current += 1;
+        if (engineReviveRef.current <= 20) {
+          eng.start(); // Idempotent است — اگر زنده باشد کاری نمی‌کند
+          if (engineReviveRef.current === 3) {
+            useStudio.getState().pushFeedback({
+              kind: "info",
+              text: "اتصال تشخیص گفتار دوباره برقرار شد — ادامه بده.",
+            });
+          }
+        } else if (engineReviveRef.current === 21) {
+          useStudio.getState().pushFeedback({
+            kind: "mistake",
+            text: "تشخیص گفتار مرورگر چندبار قطع شد. اگر ادامه نداد، جلسه را پایان بده و دوباره شروع کن.",
+          });
+        }
+      }
+    }, 3000);
+  }, []);
+
+  const stopWatchdog = useCallback(() => {
+    if (watchdogRef.current) {
+      clearInterval(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, []);
+
   const startRecording = useCallback(async () => {
     // قفل لاگین: کاربر تا وارد نشود، اجازهٔ تلاوت (ارسال صدا به هوش مصنوعی) ندارد
     const au = useAuth.getState();
@@ -274,7 +349,7 @@ export default function RecitationStudio() {
           lang: "ar-SA",
           onInterim: (text) => {
             const now = performance.now();
-            if (now - lastPreviewAtRef.current < 100) return;
+            if (now - lastPreviewAtRef.current < previewThrottleRef.current) return;
             lastPreviewAtRef.current = now;
             useStudio.getState().applyPreview(text);
           },
@@ -288,6 +363,8 @@ export default function RecitationStudio() {
         const ok = engine.start();
         if (!ok) throw new Error("engine-failed");
         engineRef.current = engine;
+        startWatchdog(); // اگر اندروید موتور را کشت، هر ۳ ثانیه زنده می‌شود
+        void requestWakeLock(); // صفحه هنگام تلاوت خاموش نشود
       } else {
         // فالبک: ضبط قطعه‌ای + ASR سروری
         const rec = new RecitationRecorder({
@@ -317,13 +394,15 @@ export default function RecitationStudio() {
       setStarting(false);
       setCountdown(null);
     }
-  }, [surah, track.length, micId, processQueue, refreshMics, toast, st, countdown]);
+  }, [surah, track.length, micId, processQueue, refreshMics, startWatchdog, toast, st, countdown]);
 
   const stopRecording = useCallback(async () => {
     if (tickRef.current) {
       clearInterval(tickRef.current);
       tickRef.current = null;
     }
+    stopWatchdog();
+    releaseWakeLock();
     const rec = recorderRef.current;
     recorderRef.current = null;
     if (rec) await rec.stop();
@@ -335,7 +414,7 @@ export default function RecitationStudio() {
     const c = useSettings.getState();
     if (c.sounds) sfx.done(c.volume);
     st.finish();
-  }, [st]);
+  }, [st, stopWatchdog]);
 
   const togglePause = useCallback(() => {
     if (st.phase === "recording") {
@@ -494,9 +573,11 @@ export default function RecitationStudio() {
 
   useEffect(() => () => {
     if (tickRef.current) clearInterval(tickRef.current);
+    stopWatchdog();
+    releaseWakeLock();
     recorderRef.current?.stop();
     engineRef.current?.stop();
-  }, []);
+  }, [stopWatchdog]);
 
   const progressPct = wordsTotal > 0 ? Math.min(100, Math.round((pos / wordsTotal) * 100)) : 0;
   const wrongCount = mistakes.filter((m) => m.type === "wrong").length;
