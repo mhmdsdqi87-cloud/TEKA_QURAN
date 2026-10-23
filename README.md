@@ -23,7 +23,7 @@ bun run dev
 
 ## 🛠 تکنولوژی
 
-Next.js 16 · TypeScript · Tailwind CSS 4 · shadcn/ui · Prisma (SQLite) · Zustand · Web Speech API · z-ai-web-dev-sdk
+Next.js 16 · TypeScript · Tailwind CSS 4 · shadcn/ui · Prisma (SQLite) · Zustand · Web Speech API 
 
 ---
 
