@@ -537,6 +537,8 @@ export default function RecitationStudio() {
     if (mCount > prevMistakesRef.current) {
       prevMistakesRef.current = mCount;
       const last = mistakes[mCount - 1];
+      // خطاهای ملایم (جاافتادگی ۱-۲ کلمه‌ای = معمولاً حذف ASR) هیچ هشدار لحظه‌ای ندارند — ضد بوق‌های کاذب
+      if (last?.mild) return;
       setFlash((f) => f + 1);
       if (cfg.sounds) {
         if (cfg.errorAlert === "all") {

@@ -256,14 +256,14 @@ export const useStudio = create<StudioState>((set, get) => ({
     const makeClone = () => s.track.map((w) => ({ ...w }));
 
     let track = makeClone();
-    let res = seqAlign(track.slice(s.pos), s.pos, heard, preset);
+    let res = seqAlign(track.slice(s.pos), s.pos, heard, preset, track);
     let bestScore = seqScore(res, s.pos);
 
     if (alternatives && alternatives.length > 1) {
       for (const alt of alternatives.slice(1, 4)) {
         if (!alt?.trim() || alt.trim() === text) continue;
         const t2 = makeClone();
-        const r2 = seqAlign(t2.slice(s.pos), s.pos, alt, preset);
+        const r2 = seqAlign(t2.slice(s.pos), s.pos, alt, preset, t2);
         const sc = seqScore(r2, s.pos);
         if (sc > bestScore + 0.02) {
           res = r2;
@@ -307,6 +307,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         at: Date.now(),
       });
     }
+    // نویز ASR هرگز خطا نیست — فقط جاافتادگی‌های واقعی ثبت می‌شوند؛
+    // جاافتادگی ۱-۲ کلمه‌ای (عمدتاً حذف ASR) «ملایم» است: در آمار می‌ماند اما بوق/توست ندارد
     for (const idx of res.missed) {
       newMistakes.push({
         type: "missed",
@@ -314,24 +316,13 @@ export const useStudio = create<StudioState>((set, get) => ({
         ayahNumber: s.ayahs[track[idx].ayahIdx]?.n ?? 0,
         expected: track[idx].text,
         at: Date.now(),
-      });
-    }
-    const insertRefIdx = Math.min(
-      Math.max(0, res.newCursor > 0 ? res.newCursor - 1 : 0),
-      Math.max(0, track.length - 1)
-    );
-    for (const ins of res.unknown) {
-      newMistakes.push({
-        type: "inserted",
-        ayahIdx: track[insertRefIdx]?.ayahIdx ?? 0,
-        ayahNumber: s.ayahs[track[insertRefIdx]?.ayahIdx ?? 0]?.n ?? 0,
-        heard: ins,
-        at: Date.now(),
+        mild: !res.missedLoud.includes(idx),
       });
     }
 
     fb.push({ id: `m${++msgCounter}`, kind: "heard", text: heard, at: Date.now() });
 
+    // پیام متنی فقط برای خطاهای قطعی (نه ملایم) — ضد اسپم
     if (res.wrong.length > 0) {
       const w = res.wrong[0];
       fb.push({
@@ -342,12 +333,12 @@ export const useStudio = create<StudioState>((set, get) => ({
         at: Date.now(),
       });
     }
-    if (res.missed.length > 0) {
-      const first = res.missed[0];
+    if (res.missedLoud.length > 0) {
+      const first = res.missedLoud[0];
       fb.push({
         id: `m${++msgCounter}`,
         kind: "mistake",
-        text: `جاافتادگی در آیهٔ ${s.ayahs[track[first].ayahIdx]?.n ?? "?"}: «${track[first].text}» گفته نشد.`,
+        text: `پرش در آیهٔ ${s.ayahs[track[first].ayahIdx]?.n ?? "?"}: از روی «${track[first].text}» رد شدی.`,
         at: Date.now(),
       });
     }
@@ -366,13 +357,14 @@ export const useStudio = create<StudioState>((set, get) => ({
     if (unknownStreak >= 8 && heardSegments.length >= 2) {
       const heardAll = heardSegments.join(" ");
       const swept = fullResweep(track, heardAll, preset);
-      if (swept !== track) {
-        const st2 = computeAccuracy(swept);
+      unknownStreak = 0;
+      const st2 = swept !== track ? computeAccuracy(swept) : null;
+      // محافظ صفرخطا: هم‌ترازی سراسری فقط اگر وضعیت را بدتر نکند اعمال می‌شود
+      if (swept !== track && st2 && st2.accuracy >= stats.accuracy - 2) {
         let sweptPos = 0;
         for (let i = 0; i < swept.length; i++) {
           if (swept[i].status !== "pending") sweptPos = i + 1;
         }
-        unknownStreak = 0;
         set({
           track: swept,
           pos: Math.max(0, sweptPos),
@@ -388,7 +380,6 @@ export const useStudio = create<StudioState>((set, get) => ({
         });
         return;
       }
-      unknownStreak = 0;
       fb.push({
         id: `m${++msgCounter}`,
         kind: "info",
@@ -429,29 +420,33 @@ export const useStudio = create<StudioState>((set, get) => ({
       if (s.heardSegments.length > 0 && s.track.length > 0) {
         const preset = STRICTNESS_PRESETS[useSettings.getState().strictness];
         const heardAll = s.heardSegments.join(" ");
+        const before = computeAccuracy(s.track);
         const swept = fullResweep(s.track, heardAll, preset);
         if (swept !== s.track) {
           const stats = computeAccuracy(swept);
-          let newPos = 0;
-          for (let i = 0; i < swept.length; i++) {
-            if (swept[i].status !== "pending") newPos = i + 1;
+          // محافظ صفرخطا: بازبینی نهایی هرگز دقت را بدتر نمی‌کند
+          if (stats.accuracy >= before.accuracy - 2) {
+            let newPos = 0;
+            for (let i = 0; i < swept.length; i++) {
+              if (swept[i].status !== "pending") newPos = i + 1;
+            }
+            return {
+              track: swept,
+              pos: Math.max(newPos, s.pos),
+              accuracy: stats.accuracy,
+              wordsCorrect: stats.correct,
+              phase: "review" as const,
+              feedback: [
+                ...s.feedback,
+                {
+                  id: `m${++msgCounter}`,
+                  kind: "analysis" as const,
+                  text: "بازبینی نهایی انجام شد؛ آمار با هم‌ترازی سراسری کل تلاوت محاسبه شد.",
+                  at: Date.now(),
+                },
+              ],
+            };
           }
-          return {
-            track: swept,
-            pos: Math.max(newPos, s.pos),
-            accuracy: stats.accuracy,
-            wordsCorrect: stats.correct,
-            phase: "review" as const,
-            feedback: [
-              ...s.feedback,
-              {
-                id: `m${++msgCounter}`,
-                kind: "analysis" as const,
-                text: "بازبینی نهایی انجام شد؛ آمار با هم‌ترازی سراسری کل تلاوت محاسبه شد.",
-                at: Date.now(),
-              },
-            ],
-          };
         }
       }
       return { phase: "review" as const };

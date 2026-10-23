@@ -24,6 +24,9 @@ export interface MistakeEvent {
   expected?: string;
   heard?: string;
   at: number; // timestamp ms
+  /** خطاهای ملایم (جاافتادگی ۱-۲ کلمه‌ای که عمدتاً ناشی از حذف ASR است) —
+   *  در آمار نهایی می‌مانند اما بوق/توست/فلاش لحظه‌ای ندارند */
+  mild?: boolean;
 }
 
 export interface AlignmentResult {
@@ -106,25 +109,46 @@ function canonWord(w: string): string {
   return CANON[w] ?? w;
 }
 
-/** فاصلهٔ لوانشتاین با سقف (برای سرعت) */
+/** طول بلندترین زیررشتهٔ مشترک (LCS) — برای تشخیص گاربل‌های ASR */
+export function lcsLength(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const lb = b.length;
+  let prev = new Array<number>(lb + 1).fill(0);
+  let curr = new Array<number>(lb + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = 0;
+    const ca = a[i - 1];
+    for (let j = 1; j <= lb; j++) {
+      curr[j] = ca === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], curr[j - 1]);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[lb];
+}
+
+/** فاصلهٔ لوانشتاین با سقف و جابجایی مجاور (Damerau-OSA) — گاربل‌های ASR حروف را جابجا می‌کنند */
 export function levenshtein(a: string, b: string, max = 3): number {
   if (a === b) return 0;
   const la = a.length,
     lb = b.length;
   if (Math.abs(la - lb) > max) return max + 1;
-  let prev = new Array<number>(lb + 1);
-  let curr = new Array<number>(lb + 1);
-  for (let j = 0; j <= lb; j++) prev[j] = j;
+  let prev2: number[] | null = null;
+  let prev = Array.from({ length: lb + 1 }, (_, j) => j);
   for (let i = 1; i <= la; i++) {
+    const curr = new Array<number>(lb + 1); // ردیف تازه — ضد aliasing با prev2
     curr[0] = i;
     let rowMin = curr[0];
     for (let j = 1; j <= lb; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
       curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        curr[j] = Math.min(curr[j], (prev2 ? prev2[j - 2] : i + j) + 1);
+      }
       if (curr[j] < rowMin) rowMin = curr[j];
     }
     if (rowMin > max) return max + 1;
-    [prev, curr] = [curr, prev];
+    prev2 = prev;
+    prev = curr;
   }
   return prev[lb];
 }
@@ -153,7 +177,35 @@ export function wordSimilarity(a: string, b: string): number {
   if (shorter.length >= 3 && longer.includes(shorter)) {
     best = Math.max(best, (shorter.length / longer.length) * 0.9);
   }
+
+  // ——— LCS: قلب تحمل گاربل ASR ———
+  // حروف جابجا/افتاده/اضافهٔ ASR را پوشش می‌دهد (یعلمون↔یلمون، العلیمی↔العالمین)
+  // اما کلمات واقعاً بی‌ربط را بالا نمی‌برد (شرط lcs≥3 و maxLen≥4)
+  if (best < 0.85 && maxLen >= 4) {
+    const l1 = lcsLength(a, b);
+    if (l1 >= 3) best = Math.max(best, (l1 / maxLen) * 0.92);
+    if (sa !== a || sb !== b) {
+      const maxLen2 = Math.max(sa.length, sb.length);
+      if (maxLen2 >= 4) {
+        const l2 = lcsLength(sa, sb);
+        if (l2 >= 3) best = Math.max(best, (l2 / maxLen2) * 0.92);
+      }
+    }
+  }
   return Math.min(1, best);
+}
+
+/** نرمال‌سازی + کانونیکال یک توکن تنها — برای جفت‌سازی امن raw/norm در sequencer */
+export function normToken(raw: string): string {
+  return canonWord(normalizeArabic(raw));
+}
+
+/**
+ * کف «تطبیق نرم»: شباهت‌های بالای این اما زیر fuzzyAccept = گاربل کلمهٔ درست —
+ * هرگز خطا شمرده نمی‌شوند (رفع ریشه‌ای «بوق‌های پشت‌سرهم»).
+ */
+export function softMinOf(preset: AlignPreset): number {
+  return Math.max(0.48, preset.fuzzyAccept - 0.18);
 }
 
 /* ------------------------------------------------------------------ */
@@ -385,13 +437,18 @@ export function alignSegment(
           if (w.status !== "correct" && w.status !== "wrong") fuzzy++;
           w.status = "correct";
         }
+      } else if (op.score !== undefined && op.score >= softMinOf(preset)) {
+        // باند نرم — گاربل کلمهٔ درست است، نه جانشینی واقعی؛ خطا محسوب نمی‌شود
+        if (w.status !== "correct" && w.status !== "wrong") fuzzy++;
+        w.status = "correct";
       } else {
-        w.status = "wrong";
-        wrong.push({
-          idx: op.expectedIdx,
-          expected: w.text,
-          heard: op.heard ?? "",
-        });
+        // زیر باند نرم = کلمهٔ ناشناس ASR در برابر این کلمه — اتهام نمی‌زنیم؛
+        // در بازبینی فقط «جاافتادگی» ثبت می‌شود (قرمز فقط از تأیید زندهٔ موتور ترتیبی می‌آید)
+        if (w.status === "pending" || w.status === "active") {
+          w.status = "missed";
+          missed.push(op.expectedIdx);
+        }
+        if (op.heard) inserted.push(op.heard);
       }
       if (op.expectedIdx + 1 > newPos) newPos = op.expectedIdx + 1;
     } else if (op.kind === "delete" && op.expectedIdx !== undefined) {
@@ -469,7 +526,16 @@ export function fullResweep(
   if (cells > 2_500_000) return track;
 
   const fresh = track.map((w) => ({ ...w, status: "pending" as WordStatus }));
-  const result = alignSegment(fresh, 0, heard, preset, true);
+  alignSegment(fresh, 0, heard, preset, true);
+
+  // ——— اصل «بازبینی فقط تبرئه می‌کند» ———
+  // قرمزهای تأییدشدهٔ موتور ترتیبی زنده محفوظ می‌مانند (مگر بازبینی همان کلمه را
+  // درست شنیده باشد) — هم‌ترازی سراسری هرگز اتهام تازه نمی‌زند (صفر خطای کاذب)
+  for (let i = 0; i < fresh.length; i++) {
+    if (track[i].status === "wrong" && fresh[i].status !== "correct") {
+      fresh[i].status = "wrong";
+    }
+  }
 
   // اگر هم‌ترازی سراسری به هیچ کلمه‌ای نرسید (مثلاً ASR کاملاً خراب بود)،
   // وضعیت لحظه‌ای معتبرتر است — track اصلی را برگردان
