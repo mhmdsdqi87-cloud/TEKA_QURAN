@@ -1,0 +1,1095 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+     4→     4→import { motion } from "framer-motion";
+     5→     5→import {
+     6→     6→  AlertTriangle,
+     7→     7→  Bot,
+     8→     8→  CheckCheck,
+     9→     9→  ChevronDown,
+    10→    10→  Flag,
+    11→    11→  Loader2,
+    12→    12→  Mic,
+    13→    13→  MicOff,
+    14→    14→  Pause,
+    15→    15→  Play,
+    16→    16→  RotateCcw,
+    17→    17→  SlidersHorizontal,
+    18→    18→  Square,
+    19→    19→  Volume2,
+    20→    20→} from "lucide-react";
+    21→    21→import { Button } from "@/components/ui/button";
+    22→    22→import {
+    23→    23→  Select,
+    24→    24→  SelectContent,
+    25→    25→  SelectItem,
+    26→    26→  SelectTrigger,
+    27→    27→  SelectValue,
+    28→    28→} from "@/components/ui/select";
+    29→    29→import { Switch } from "@/components/ui/switch";
+    30→    30→import { Label } from "@/components/ui/label";
+    31→    31→import { Separator } from "@/components/ui/separator";
+    32→    32→import { Slider } from "@/components/ui/slider";
+    33→    33→import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+    34→    34→import { useToast } from "@/hooks/use-toast";
+    35→    35→import LiveAyahView from "@/components/live-ayah-view";
+    36→    36→import FeedbackPanel from "@/components/feedback-panel";
+    37→    37→import { toFa, type SurahMetaClient } from "@/components/surah-explorer";
+    38→    38→import { RecitationRecorder, listMicrophones } from "@/lib/recorder";
+    39→    39→import { SpeechEngine, isBrowserSpeechSupported } from "@/lib/speech";
+    40→    40→import { getHafezUid } from "@/lib/user";
+    41→    41→import { useStudio, type AyahLite, type SurahLite } from "@/lib/store";
+    42→    42→import {
+    43→    43→  useSettings,
+    44→    44→  ERROR_ALERT_LABELS,
+    45→    45→  STRICTNESS_LABELS,
+    46→    46→  TEXT_SIZE_LABELS,
+    47→    47→  type ErrorAlert,
+    48→    48→  type Strictness,
+    49→    49→  type TextSize,
+    50→    50→} from "@/lib/settings";
+    51→    51→import { sfx, unlockAudio, vibrate } from "@/lib/sfx";
+    52→    52→import type { MistakeEvent } from "@/lib/alignment";
+    53→    53→
+    54→    54→interface AnalyzeResult {
+    55→    55→  summary: string;
+    56→    56→  scoreNote: string;
+    57→    57→  tips: string[];
+    58→    58→  mistakes: { ayahNumber: number; kind: string; expected: string; heard: string; note: string }[];
+    59→    59→  fallback?: boolean;
+    60→    60→}
+    61→    61→
+    62→    62→export default function RecitationStudio() {
+    63→    63→  const { toast } = useToast();
+    64→    64→  const st = useStudio();
+    65→    65→  const cfg = useSettings();
+    66→    66→  const setCfg = useSettings((s) => s.update);
+    67→    67→  const {
+    68→    68→    surah, fromAyah, toAyah, ayahs, track, pos, phase, accuracy, wordsTotal, wordsCorrect,
+    69→    69→    mistakes, showTranslation, elapsedSec, feedback,
+    70→    70→  } = st;
+    71→    71→
+    72→    72→  const [allSurahs, setAllSurahs] = useState<SurahMetaClient[]>([]);
+    73→    73→  const [selSurah, setSelSurah] = useState<string>("");
+    74→    74→  const [selFrom, setSelFrom] = useState<string>("");
+    75→    75→  const [selTo, setSelTo] = useState<string>("");
+    76→    76→  const [loadingRange, setLoadingRange] = useState(false);
+    77→    77→
+    78→    78→  const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+    79→    79→  const [micId, setMicId] = useState<string>("default");
+    80→    80→  const [starting, setStarting] = useState(false);
+    81→    81→  const [level, setLevel] = useState(0);
+    82→    82→  const [analyzing, setAnalyzing] = useState(false);
+    83→    83→  const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
+    84→    84→  const [saved, setSaved] = useState(false);
+    85→    85→  const [countdown, setCountdown] = useState<number | null>(null);
+    86→    86→
+    87→    87→  const recorderRef = useRef<RecitationRecorder | null>(null);
+    88→    88→  const engineRef = useRef<SpeechEngine | null>(null);
+    89→    89→  const queueRef = useRef<string[]>([]);
+    90→    90→  const processingRef = useRef(false);
+    91→    91→  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    92→    92→  const savedRef = useRef(false);
+    93→    93→  const lastPreviewAtRef = useRef(0);
+    94→    94→  const [browserSpeech, setBrowserSpeech] = useState<boolean | null>(null);
+    95→    95→
+    96→    96→  useEffect(() => {
+    97→    97→    setBrowserSpeech(isBrowserSpeechSupported());
+    98→    98→  }, []);
+    99→    99→
+   100→   100→  /* ---------- بارگذاری فهرست سوره‌ها (با کش اسپلش) ---------- */
+   101→   101→  useEffect(() => {
+   102→   102→    try {
+   103→   103→      const cached = sessionStorage.getItem("hafez-surahs");
+   104→   104→      if (cached) {
+   105→   105→        const parsed = JSON.parse(cached) as SurahMetaClient[];
+   106→   106→        if (Array.isArray(parsed) && parsed.length > 0) {
+   107→   107→          setAllSurahs(parsed);
+   108→   108→          return;
+   109→   109→        }
+   110→   110→      }
+   111→   111→    } catch {
+   112→   112→      /* کش نامعتبر — از سرور */
+   113→   113→    }
+   114→   114→    fetch("/api/quran")
+   115→   115→      .then((r) => r.json())
+   116→   116→      .then((d: { surahs: SurahMetaClient[] }) => setAllSurahs(d.surahs ?? []))
+   117→   117→      .catch(() => toast({ title: "خطا", description: "بارگذاری فهرست سوره‌ها ناموفق بود.", variant: "destructive" }));
+   118→   118→  }, [toast]);
+   119→   119→
+   120→   120→  /* ---------- بارگذاری بازهٔ آیات ---------- */
+   121→   121→  const loadRange = useCallback(
+   122→   122→    async (surahNum: number, from: number, to: number) => {
+   123→   123→      setLoadingRange(true);
+   124→   124→      try {
+   125→   125→        const res = await fetch(`/api/quran/${surahNum}?from=${from}&to=${to}`);
+   126→   126→        const data = (await res.json()) as { surah?: SurahLite & { ayahs: AyahLite[] }; error?: string };
+   127→   127→        if (!res.ok || !data.surah) {
+   128→   128→          toast({ title: "خطا", description: data.error ?? "بارگذاری آیات ناموفق بود.", variant: "destructive" });
+   129→   129→          return;
+   130→   130→        }
+   131→   131→        const s = data.surah;
+   132→   132→        st.setRange(
+   133→   133→          { n: s.n, name: s.name, en: s.en, type: s.type, count: s.count },
+   134→   134→          from,
+   135→   135→          to,
+   136→   136→          s.ayahs
+   137→   137→        );
+   138→   138→        setAnalysis(null);
+   139→   139→        setSaved(false);
+   140→   140→        savedRef.current = false;
+   141→   141→      } catch {
+   142→   142→        toast({ title: "خطا", description: "ارتباط با سرور برقرار نشد.", variant: "destructive" });
+   143→   143→      } finally {
+   144→   144→        setLoadingRange(false);
+   145→   145→      }
+   146→   146→    },
+   147→   147→    [toast]
+   148→   148→  );
+   149→   149→
+   150→   150→  /* ---------- انتخاب سوره ---------- */
+   151→   151→  const handleSurahChange = (v: string) => {
+   152→   152→    setSelSurah(v);
+   153→   153→    const s = allSurahs.find((x) => String(x.n) === v);
+   154→   154→    if (!s) return;
+   155→   155→    const defTo = Math.min(s.count, s.count > 20 ? 10 : s.count);
+   156→   156→    setSelFrom("1");
+   157→   157→    setSelTo(String(defTo));
+   158→   158→    void loadRange(s.n, 1, defTo);
+   159→   159→  };
+   160→   160→
+   161→   161→  const handleFromChange = (v: string) => {
+   162→   162→    setSelFrom(v);
+   163→   163→    const s = allSurahs.find((x) => String(x.n) === selSurah);
+   164→   164→    if (!s) return;
+   165→   165→    const from = parseInt(v, 10);
+   166→   166→    let to = parseInt(selTo, 10) || from;
+   167→   167→    if (to < from) {
+   168→   168→      to = Math.min(s.count, from + 9);
+   169→   169→      setSelTo(String(to));
+   170→   170→    }
+   171→   171→    void loadRange(s.n, from, to);
+   172→   172→  };
+   173→   173→
+   174→   174→  const handleToChange = (v: string) => {
+   175→   175→    setSelTo(v);
+   176→   176→    const s = allSurahs.find((x) => String(x.n) === selSurah);
+   177→   177→    if (!s) return;
+   178→   178→    const to = parseInt(v, 10);
+   179→   179→    const from = parseInt(selFrom, 10) || 1;
+   180→   180→    if (to >= from) void loadRange(s.n, from, to);
+   181→   181→  };
+   182→   182→
+   183→   183→  /* ---------- صف ASR ---------- */
+   184→   184→  const processQueue = useCallback(async () => {
+   185→   185→    if (processingRef.current) return;
+   186→   186→    processingRef.current = true;
+   187→   187→    while (queueRef.current.length > 0) {
+   188→   188→      const b64 = queueRef.current.shift()!;
+   189→   189→      let done = false;
+   190→   190→      for (let attempt = 0; attempt < 2 && !done; attempt++) {
+   191→   191→        try {
+   192→   192→          const res = await fetch("/api/asr", {
+   193→   193→            method: "POST",
+   194→   194→            headers: { "Content-Type": "application/json" },
+   195→   195→            body: JSON.stringify({ audio: b64 }),
+   196→   196→          });
+   197→   197→          if (!res.ok) throw new Error(`ASR ${res.status}`);
+   198→   198→          const data = (await res.json()) as { text?: string };
+   199→   199→          if (data.text && data.text.trim()) {
+   200→   200→            useStudio.getState().applyHeard(data.text);
+   201→   201→          }
+   202→   202→          done = true;
+   203→   203→        } catch {
+   204→   204→          if (attempt === 1) {
+   205→   205→            useStudio.getState().pushFeedback({
+   206→   206→              kind: "info",
+   207→   207→              text: "یک قطعهٔ صوتی ارسال نشد؛ ادامه می‌دهم. اتصال اینترنت را بررسی کن.",
+   208→   208→            });
+   209→   209→          } else {
+   210→   210→            await new Promise((r) => setTimeout(r, 900));
+   211→   211→          }
+   212→   212→        }
+   213→   213→      }
+   214→   214→    }
+   215→   215→    processingRef.current = false;
+   216→   216→  }, []);
+   217→   217→
+   218→   218→  /* ---------- شروع / توقف ضبط ---------- */
+   219→   219→  const refreshMics = useCallback(async () => {
+   220→   220→    const list = await listMicrophones();
+   221→   221→    setMics(list);
+   222→   222→  }, []);
+   223→   223→
+   224→   224→  const startRecording = useCallback(async () => {
+   225→   225→    if (!surah || track.length === 0) {
+   226→   226→      toast({ title: "اول بازه را انتخاب کن", description: "سوره و بازهٔ آیات را مشخص کن." });
+   227→   227→      return;
+   228→   228→    }
+   229→   229→    if (countdown !== null) return;
+   230→   230→    unlockAudio();
+   231→   231→    const c = useSettings.getState();
+   232→   232→    setStarting(true);
+   233→   233→    // شمارش معکوس آماده‌سازی ۳-۲-۱ (قابل خاموش‌کردن در تنظیمات)
+   234→   234→    if (c.countdown) {
+   235→   235→      setCountdown(3);
+   236→   236→      if (c.sounds) sfx.count(c.volume);
+   237→   237→      await new Promise((r) => setTimeout(r, 900));
+   238→   238→      setCountdown(2);
+   239→   239→      if (c.sounds) sfx.count(c.volume);
+   240→   240→      await new Promise((r) => setTimeout(r, 900));
+   241→   241→      setCountdown(1);
+   242→   242→      if (c.sounds) sfx.count(c.volume);
+   243→   243→      await new Promise((r) => setTimeout(r, 900));
+   244→   244→      setCountdown(null);
+   245→   245→      if (c.sounds) sfx.go(c.volume);
+   246→   246→    }
+   247→   247→    try {
+   248→   248→      const useBrowser = isBrowserSpeechSupported();
+   249→   249→      if (useBrowser) {
+   250→   250→        // موتور اصلی: تشخیص گفتار مرورگر — زنده و کلمه‌به‌کلمه با گزینه‌های جایگزین
+   251→   251→        const engine = new SpeechEngine({
+   252→   252→          lang: "ar-SA",
+   253→   253→          onInterim: (text) => {
+   254→   254→            const now = performance.now();
+   255→   255→            if (now - lastPreviewAtRef.current < 100) return;
+   256→   256→            lastPreviewAtRef.current = now;
+   257→   257→            useStudio.getState().applyPreview(text);
+   258→   258→          },
+   259→   259→          onFinal: (text, alts) => {
+   260→   260→            useStudio.getState().applyHeard(text, alts);
+   261→   261→          },
+   262→   262→          onError: (msg, fatal) => {
+   263→   263→            toast({ title: fatal ? "تشخیص گفتار" : "توجه", description: msg, variant: fatal ? "destructive" : "default" });
+   264→   264→          },
+   265→   265→        });
+   266→   266→        const ok = engine.start();
+   267→   267→        if (!ok) throw new Error("engine-failed");
+   268→   268→        engineRef.current = engine;
+   269→   269→      } else {
+   270→   270→        // فالبک: ضبط قطعه‌ای + ASR سروری
+   271→   271→        const rec = new RecitationRecorder({
+   272→   272→          chunkMs: 6000,
+   273→   273→          onChunk: (b64) => {
+   274→   274→            queueRef.current.push(b64);
+   275→   275→            void processQueue();
+   276→   276→          },
+   277→   277→          onError: (msg) => toast({ title: "میکروفون", description: msg, variant: "destructive" }),
+   278→   278→          onLevel: (rms) => setLevel(rms),
+   279→   279→        });
+   280→   280→        await rec.start(micId === "default" ? undefined : micId);
+   281→   281→        recorderRef.current = rec;
+   282→   282→      }
+   283→   283→      st.startListening();
+   284→   284→      st.begin();
+   285→   285→      void refreshMics();
+   286→   286→      if (tickRef.current) clearInterval(tickRef.current);
+   287→   287→      tickRef.current = setInterval(() => useStudio.getState().tick(), 1000);
+   288→   288→    } catch {
+   289→   289→      toast({
+   290→   290→        title: "میکروفون",
+   291→   291→        description: "شروع ضبط ناموفق بود؛ دسترسی میکروفون را بررسی کن و دوباره امتحان کن.",
+   292→   292→        variant: "destructive",
+   293→   293→      });
+   294→   294→    } finally {
+   295→   295→      setStarting(false);
+   296→   296→      setCountdown(null);
+   297→   297→    }
+   298→   298→  }, [surah, track.length, micId, processQueue, refreshMics, toast, st, countdown]);
+   299→   299→
+   300→   300→  const stopRecording = useCallback(async () => {
+   301→   301→    if (tickRef.current) {
+   302→   302→      clearInterval(tickRef.current);
+   303→   303→      tickRef.current = null;
+   304→   304→    }
+   305→   305→    const rec = recorderRef.current;
+   306→   306→    recorderRef.current = null;
+   307→   307→    if (rec) await rec.stop();
+   308→   308→    const eng = engineRef.current;
+   309→   309→    engineRef.current = null;
+   310→   310→    eng?.stop();
+   311→   311→    useStudio.getState().clearPreview();
+   312→   312→    setLevel(0);
+   313→   313→    const c = useSettings.getState();
+   314→   314→    if (c.sounds) sfx.done(c.volume);
+   315→   315→    st.finish();
+   316→   316→  }, [st]);
+   317→   317→
+   318→   318→  const togglePause = useCallback(() => {
+   319→   319→    if (st.phase === "recording") {
+   320→   320→      const eng = engineRef.current;
+   321→   321→      if (eng) {
+   322→   322→        eng.stop();
+   323→   323→        useStudio.getState().clearPreview();
+   324→   324→      }
+   325→   325→      const rec = recorderRef.current;
+   326→   326→      rec?.pause();
+   327→   327→      st.pauseListening();
+   328→   328→    } else if (st.phase === "paused") {
+   329→   329→      const eng = engineRef.current;
+   330→   330→      if (eng) eng.start();
+   331→   331→      const rec = recorderRef.current;
+   332→   332→      rec?.resume();
+   333→   333→      st.startListening();
+   334→   334→    }
+   335→   335→  }, [st.phase]);
+   336→   336→
+   337→   337→  const restartRange = useCallback(() => {
+   338→   338→    const s = st.surah;
+   339→   339→    if (!s) return;
+   340→   340→    void loadRange(s.n, st.fromAyah, st.toAyah);
+   341→   341→    setAnalysis(null);
+   342→   342→  }, [st.surah, st.fromAyah, st.toAyah, loadRange]);
+   343→   343→
+   344→   344→  /* ---------- پایان خودکار ---------- */
+   345→   345→  const finishedAll = track.length > 0 && pos >= track.length;
+   346→   346→  useEffect(() => {
+   347→   347→    if (finishedAll && phase === "recording" && cfg.autoStop) {
+   348→   348→      void stopRecording();
+   349→   349→    }
+   350→   350→  }, [finishedAll, phase, cfg.autoStop, stopRecording]);
+   351→   351→
+   352→   352→  /* ---------- هشدار لحظه‌ای خطا: بوق + لرزش + توست + فلاش ---------- */
+   353→   353→  const [flash, setFlash] = useState(0);
+   354→   354→  const prevMistakesRef = useRef(0);
+   355→   355→  const prevFeedbackRef = useRef(0);
+   356→   356→  useEffect(() => {
+   357→   357→    const mCount = mistakes.length;
+   358→   358→    if (mCount < prevMistakesRef.current) {
+   359→   359→      prevMistakesRef.current = mCount; // جلسهٔ جدید
+   360→   360→      prevFeedbackRef.current = feedback.length;
+   361→   361→      return;
+   362→   362→    }
+   363→   363→    if (mCount > prevMistakesRef.current) {
+   364→   364→      prevMistakesRef.current = mCount;
+   365→   365→      const last = mistakes[mCount - 1];
+   366→   366→      setFlash((f) => f + 1);
+   367→   367→      if (cfg.sounds) {
+   368→   368→        if (cfg.errorAlert === "all") {
+   369→   369→          sfx.error(cfg.volume);
+   370→   370→          vibrate();
+   371→   371→        } else if (cfg.errorAlert === "beep") {
+   372→   372→          sfx.error(cfg.volume);
+   373→   373→        } else if (cfg.errorAlert === "vibrate") {
+   374→   374→          vibrate();
+   375→   375→        }
+   376→   376→      }
+   377→   377→      if (cfg.liveFeedback && (phase === "recording" || phase === "paused")) {
+   378→   378→        const desc =
+   379→   379→          last.type === "wrong"
+   380→   380→            ? `به‌جای «${last.expected}» شنیدم «${last.heard}»`
+   381→   381→            : last.type === "missed"
+   382→   382→              ? `کلمهٔ «${last.expected}» گفته نشد`
+   383→   383→              : `کلمهٔ «${last.heard}» اضافه خوانده شد`;
+   384→   384→        toast({
+   385→   385→          title: `خطا در آیهٔ ${toFa(last.ayahNumber)}`,
+   386→   386→          description: desc,
+   387→   387→          variant: "destructive",
+   388→   388→          duration: 2800,
+   389→   389→        });
+   390→   390→      }
+   391→   391→    }
+   392→   392→    // صدای تشویق
+   393→   393→    const fLen = feedback.length;
+   394→   394→    if (fLen > prevFeedbackRef.current) {
+   395→   395→      const lastMsg = feedback[fLen - 1];
+   396→   396→      if (lastMsg?.kind === "praise" && cfg.sounds && cfg.praise) sfx.praise(cfg.volume);
+   397→   397→    }
+   398→   398→    prevFeedbackRef.current = Math.max(prevFeedbackRef.current < fLen ? fLen : prevFeedbackRef.current, fLen);
+   399→   399→  }, [mistakes, feedback, cfg.sounds, cfg.errorAlert, cfg.volume, cfg.liveFeedback, cfg.praise, phase, toast]);
+   400→   400→
+   401→   401→  /* ---------- تحلیل LLM + ذخیرهٔ جلسه ---------- */
+   402→   402→  const runAnalysis = useCallback(async () => {
+   403→   403→    if (st.ayahs.length === 0 || savedRef.current) return;
+   404→   404→    savedRef.current = true;
+   405→   405→    setAnalyzing(true);
+   406→   406→    try {
+   407→   407→      const expected = st.ayahs.map((a) => `آیهٔ ${a.n}: ${a.t}`).join("\n");
+   408→   408→      const heard = st.heardSegments.join(" ");
+   409→   409→      const mistakeSummary = st.mistakes.slice(0, 30).map((m: MistakeEvent) => ({
+   410→   410→        type: m.type,
+   411→   411→        ayahNumber: m.ayahNumber,
+   412→   412→        expected: m.expected,
+   413→   413→        heard: m.heard,
+   414→   414→      }));
+   415→   415→      const [anRes, svRes] = await Promise.allSettled([
+   416→   416→        fetch("/api/analyze", {
+   417→   417→          method: "POST",
+   418→   418→          headers: { "Content-Type": "application/json" },
+   419→   419→          body: JSON.stringify({
+   420→   420→            surahName: st.surah?.name ?? "",
+   421→   421→            expected,
+   422→   422→            heard,
+   423→   423→            mistakes: mistakeSummary,
+   424→   424→            accuracy: st.accuracy,
+   425→   425→          }),
+   426→   426→        }).then((r) => r.json() as Promise<AnalyzeResult>),
+   427→   427→        fetch("/api/sessions", {
+   428→   428→          method: "POST",
+   429→   429→          headers: { "Content-Type": "application/json" },
+   430→   430→          body: JSON.stringify({
+   431→   431→            userId: getHafezUid(),
+   432→   432→            surahNumber: st.surah?.n ?? 1,
+   433→   433→            surahName: st.surah?.name ?? "",
+   434→   434→            ayahFrom: st.fromAyah,
+   435→   435→            ayahTo: st.toAyah,
+   436→   436→            accuracy: st.accuracy,
+   437→   437→            durationSec: st.elapsedSec,
+   438→   438→            wordsTotal: st.wordsTotal,
+   439→   439→            wordsCorrect: st.wordsCorrect,
+   440→   440→            mistakes: mistakeSummary,
+   441→   441→          }),
+   442→   442→        }),
+   443→   443→      ]);
+   444→   444→      if (anRes.status === "fulfilled") {
+   445→   445→        setAnalysis(anRes.value);
+   446→   446→        const a = anRes.value;
+   447→   447→        st.pushFeedback({
+   448→   448→          kind: "analysis",
+   449→   449→          text: a.summary || "تحلیل آماده شد.",
+   450→   450→          detail: a.tips?.length ? a.tips.join(" • ") : undefined,
+   451→   451→        });
+   452→   452→      }
+   453→   453→      if (svRes.status === "fulfilled") {
+   454→   454→        setSaved(true);
+   455→   455→        window.dispatchEvent(new CustomEvent("hafez:session-saved"));
+   456→   456→      } else {
+   457→   457→        toast({ title: "ذخیرهٔ جلسه", description: "ذخیرهٔ جلسه در سرور ناموفق بود.", variant: "destructive" });
+   458→   458→        setSaved(false);
+   459→   459→      }
+   460→   460→    } catch {
+   461→   461→      toast({ title: "تحلیل", description: "تحلیل هوش مصنوعی در دسترس نبود.", variant: "destructive" });
+   462→   462→    } finally {
+   463→   463→      setAnalyzing(false);
+   464→   464→    }
+   465→   465→  }, [st.ayahs, st.heardSegments, st.mistakes, st.accuracy, st.surah, st.fromAyah, st.toAyah, st.elapsedSec, st.wordsTotal, st.wordsCorrect, toast]);
+   466→   466→
+   467→   467→  useEffect(() => {
+   468→   468→    if (phase === "review" && !savedRef.current) {
+   469→   469→      void runAnalysis();
+   470→   470→    }
+   471→   471→  }, [phase]);
+   472→   472→
+   473→   473→  useEffect(() => () => {
+   474→   474→    if (tickRef.current) clearInterval(tickRef.current);
+   475→   475→    recorderRef.current?.stop();
+   476→   476→    engineRef.current?.stop();
+   477→   477→  }, []);
+   478→   478→
+   479→   479→  const progressPct = wordsTotal > 0 ? Math.min(100, Math.round((pos / wordsTotal) * 100)) : 0;
+   480→   480→  const wrongCount = mistakes.filter((m) => m.type === "wrong").length;
+   481→   481→  const missedCount = mistakes.filter((m) => m.type === "missed").length;
+   482→   482→  const insertedCount = mistakes.filter((m) => m.type === "inserted").length;
+   483→   483→
+   484→   484→  const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
+   485→   485→  const ss = String(elapsedSec % 60).padStart(2, "0");
+   486→   486→
+   487→   487→  return (
+   488→   488→    <section id="studio" className="scroll-mt-24" aria-label="استودیوی تلاوت">
+   489→   489→      {/* شمارش معکوس آماده‌سازی */}
+   490→   490→      {countdown !== null && (
+   491→   491→        <div
+   492→   492→          className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-6 bg-background/80 backdrop-blur-md"
+   493→   493→          role="alert"
+   494→   494→          aria-live="assertive"
+   495→   495→          aria-label={`آماده شو؛ ${toFa(countdown)}`}
+   496→   496→        >
+   497→   497→          <motion.p
+   498→   498→            key={countdown}
+   499→   499→            initial={{ scale: 2.2, opacity: 0, filter: "blur(10px)" }}
+   500→   500→            animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
+   501→   501→            exit={{ scale: 0.6, opacity: 0 }}
+   502→   502→            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+   503→   503→            className="font-quran text-glow-gold text-[7rem] font-black leading-none text-gold sm:text-[10rem]"
+   504→   504→          >
+   505→   505→            {toFa(countdown)}
+   506→   506→          </motion.p>
+   507→   507→          <p className="text-sm text-muted-foreground">آماده شو… بعد از این عدد تلاوت را شروع کن</p>
+   508→   508→          <div className="flex gap-2">
+   509→   509→            {[3, 2, 1].map((n) => (
+   510→   510→              <span
+   511→   511→                key={n}
+   512→   512→                className={`size-2.5 rounded-full transition-colors ${countdown >= n ? "bg-gold" : "bg-muted"}`}
+   513→   513→                aria-hidden="true"
+   514→   514→              />
+   515→   515→            ))}
+   516→   516→          </div>
+   517→   517→        </div>
+   518→   518→      )}
+   519→   519→
+   520→   520→      <div className="mb-6 flex flex-col items-center gap-2 text-center">
+   521→   521→        <h2 className="text-2xl font-black sm:text-3xl">
+   522→   522→          استودیوی <span className="text-gold text-glow-gold">تلاوت</span>
+   523→   523→        </h2>
+   524→   524→        <p className="max-w-xl text-sm leading-7 text-muted-foreground">
+   525→   525→          میکروفونت را انتخاب کن، بازهٔ آیات را مشخص کن و تلاوت را شروع کن. هوش مصنوعی همزمان گوش می‌دهد،
+   526→   526→          خط به خط دنبال می‌کند و اشکالات را لحظه‌ای نشان می‌دهد.
+   527→   527→        </p>
+   528→   528→      </div>
+   529→   529→
+   530→   530→      {/* انتخاب بازه */}
+   531→   531→      <div className="glass-card gold-border-glow mb-5 rounded-2xl p-4 sm:p-5">
+   532→   532→        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+   533→   533→          <div className="flex-1 space-y-1.5">
+   534→   534→            <Label htmlFor="surah-select" className="text-xs text-muted-foreground">سوره</Label>
+   535→   535→            <Select value={selSurah} onValueChange={handleSurahChange}>
+   536→   536→              <SelectTrigger id="surah-select" className="w-full rounded-xl" aria-label="انتخاب سوره">
+   537→   537→                <SelectValue placeholder="یک سوره انتخاب کن…" />
+   538→   538→              </SelectTrigger>
+   539→   539→              <SelectContent className="nice-scroll max-h-72">
+   540→   540→                {allSurahs.map((s) => (
+   541→   541→                  <SelectItem key={s.n} value={String(s.n)}>
+   542→   542→                    <span className="font-quran text-base">{s.name.replace("سُورَةُ ", "")}</span>
+   543→   543→                    <span className="mr-2 text-xs text-muted-foreground">({s.en} — {toFa(s.count)} آیه)</span>
+   544→   544→                  </SelectItem>
+   545→   545→                ))}
+   546→   546→              </SelectContent>
+   547→   547→            </Select>
+   548→   548→          </div>
+   549→   549→          <div className="flex gap-3">
+   550→   550→            <div className="w-28 space-y-1.5">
+   551→   551→              <Label className="text-xs text-muted-foreground">از آیه</Label>
+   552→   552→              <Select value={selFrom} onValueChange={handleFromChange} disabled={!selSurah}>
+   553→   553→                <SelectTrigger className="w-full rounded-xl" aria-label="از آیه">
+   554→   554→                  <SelectValue placeholder="۱" />
+   555→   555→                </SelectTrigger>
+   556→   556→                <SelectContent className="nice-scroll max-h-72">
+   557→   557→                  {ayahNumbers(selSurah, allSurahs).map((n) => (
+   558→   558→                    <SelectItem key={n} value={String(n)}>{toFa(n)}</SelectItem>
+   559→   559→                  ))}
+   560→   560→                </SelectContent>
+   561→   561→              </Select>
+   562→   562→            </div>
+   563→   563→            <div className="w-28 space-y-1.5">
+   564→   564→              <Label className="text-xs text-muted-foreground">تا آیه</Label>
+   565→   565→              <Select value={selTo} onValueChange={handleToChange} disabled={!selSurah}>
+   566→   566→                <SelectTrigger className="w-full rounded-xl" aria-label="تا آیه">
+   567→   567→                  <SelectValue placeholder="—" />
+   568→   568→                </SelectTrigger>
+   569→   569→                <SelectContent className="nice-scroll max-h-72">
+   570→   570→                  {ayahNumbers(selSurah, allSurahs)
+   571→   571→                    .filter((n) => n >= (parseInt(selFrom, 10) || 1))
+   572→   572→                    .map((n) => (
+   573→   573→                      <SelectItem key={n} value={String(n)}>{toFa(n)}</SelectItem>
+   574→   574→                    ))}
+   575→   575→                </SelectContent>
+   576→   576→              </Select>
+   577→   577→            </div>
+   578→   578→          </div>
+   579→   579→        </div>
+   580→   580→
+   581→   581→        {surah && (
+   582→   582→          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gold/15 pt-3 text-xs text-muted-foreground">
+   583→   583→            <span className="font-quran text-base text-foreground">{surah.name.replace("سُورَةُ ", "")}</span>
+   584→   584→            <span>بازهٔ {toFa(fromAyah)} تا {toFa(toAyah)}</span>
+   585→   585→            <span>{toFa(wordsTotal)} کلمه</span>
+   586→   586→            {loadingRange && <span className="flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> در حال بارگذاری…</span>}
+   587→   587→          </div>
+   588→   588→        )}
+   589→   589→      </div>
+   590→   590→
+   591→   591→      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+   592→   592→        {/* ستون اصلی */}
+   593→   593→        <div className="flex flex-col gap-5">
+   594→   594→          <div className="relative">
+   595→   595→            <LiveAyahView />
+   596→   596→            {flash > 0 && (
+   597→   597→              <div
+   598→   598→                key={flash}
+   599→   599→                className="error-flash pointer-events-none absolute inset-0 z-10 rounded-2xl ring-2 ring-red-500"
+   600→   600→                aria-hidden="true"
+   601→   601→              />
+   602→   602→            )}
+   603→   603→          </div>
+   604→   604→
+   605→   605→          {/* نوار پیشرفت + آمار زنده */}
+   606→   606→          <div className="glass-card rounded-2xl p-4">
+   607→   607→            <div className="flex flex-wrap items-center justify-between gap-3">
+   608→   608→              <div className="flex items-center gap-4">
+   609→   609→                {/* حلقهٔ دقت */}
+   610→   610→                <div className="relative size-16" role="img" aria-label={`دقت ${accuracy} درصد`}>
+   611→   611→                  <svg viewBox="0 0 64 64" className="size-16 -rotate-90">
+   612→   612→                    <circle cx="32" cy="32" r="27" fill="none" strokeWidth="6" className="stroke-muted" />
+   613→   613→                    <circle
+   614→   614→                      cx="32" cy="32" r="27" fill="none" strokeWidth="6" strokeLinecap="round"
+   615→   615→                      className={accuracy >= 90 ? "stroke-emerald-500" : accuracy >= 70 ? "stroke-gold" : "stroke-red-500"}
+   616→   616→                      strokeDasharray={`${(accuracy / 100) * 169.6} 169.6`}
+   617→   617→                      style={{ transition: "stroke-dasharray 0.6s ease" }}
+   618→   618→                    />
+   619→   619→                  </svg>
+   620→   620→                  <span className="absolute inset-0 flex items-center justify-center text-sm font-black">
+   621→   621→                    {toFa(accuracy)}٪
+   622→   622→                  </span>
+   623→   623→                </div>
+   624→   624→                <div className="flex flex-col gap-0.5 text-xs">
+   625→   625→                  <span className="font-bold text-foreground">
+   626→   626→                    {phase === "recording" || phase === "paused" ? `${mm}:${ss}` : "۰۰:۰۰"}
+   627→   627→                  </span>
+   628→   628→                  <span className="text-muted-foreground">
+   629→   629→                    {toFa(pos)} از {toFa(wordsTotal)} کلمه ({toFa(progressPct)}٪)
+   630→   630→                  </span>
+   631→   631→                  <span className="flex gap-2 text-muted-foreground">
+   632→   632→                    <span className="text-emerald-600 dark:text-emerald-400">✓ {toFa(wordsCorrect)}</span>
+   633→   633→                    <span className="text-red-500">✗ {toFa(wrongCount)}</span>
+   634→   634→                    <span className="text-gold">— {toFa(missedCount)}</span>
+   635→   635→                    {insertedCount > 0 && <span>+{toFa(insertedCount)}</span>}
+   636→   636→                  </span>
+   637→   637→                </div>
+   638→   638→              </div>
+   639→   639→
+   640→   640→              {/* کنترل‌ها */}
+   641→   641→              <div className="flex items-center gap-2.5">
+   642→   642→                {(phase === "recording" || phase === "paused") ? (
+   643→   643→                  <>
+   644→   644→                    <Button
+   645→   645→                      size="icon"
+   646→   646→                      variant="outline"
+   647→   647→                      className="size-12 rounded-full"
+   648→   648→                      onClick={togglePause}
+   649→   649→                      aria-label={phase === "recording" ? "مکث" : "ادامه"}
+   650→   650→                    >
+   651→   651→                      {phase === "recording" ? <Pause className="size-5" /> : <Play className="size-5" />}
+   652→   652→                    </Button>
+   653→   653→                    <button
+   654→   654→                      type="button"
+   655→   655→                      onClick={() => void stopRecording()}
+   656→   656→                      aria-label="پایان تلاوت"
+   657→   657→                      className="rec-pulse flex size-16 items-center justify-center rounded-full bg-gradient-to-br from-red-500 to-red-700 text-white shadow-xl transition-transform hover:scale-105 active:scale-95"
+   658→   658→                    >
+   659→   659→                      <Square className="size-6" aria-hidden="true" />
+   660→   660→                    </button>
+   661→   661→                  </>
+   662→   662→                ) : (
+   663→   663→                  <button
+   664→   664→                    type="button"
+   665→   665→                    onClick={() => void startRecording()}
+   666→   666→                    disabled={starting || !surah || loadingRange}
+   667→   667→                    aria-label="شروع تلاوت با میکروفون"
+   668→   668→                    className="flex size-16 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-xl transition-all hover:scale-105 hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:hover:scale-100"
+   669→   669→                  >
+   670→   670→                    {starting ? (
+   671→   671→                      <Loader2 className="size-6 animate-spin" aria-hidden="true" />
+   672→   672→                    ) : (
+   673→   673→                      <Mic className="size-6" aria-hidden="true" />
+   674→   674→                    )}
+   675→   675→                  </button>
+   676→   676→                )}
+   677→   677→                <Button
+   678→   678→                  size="icon"
+   679→   679→                  variant="ghost"
+   680→   680→                  className="size-11 rounded-full"
+   681→   681→                  onClick={restartRange}
+   682→   682→                  disabled={!surah || phase === "recording"}
+   683→   683→                  aria-label="شروع مجدد بازه"
+   684→   684→                >
+   685→   685→                  <RotateCcw className="size-4" />
+   686→   686→                </Button>
+   687→   687→                <Button
+   688→   688→                  size="icon"
+   689→   689→                  variant="ghost"
+   690→   690→                  className="size-11 rounded-full"
+   691→   691→                  onClick={() => void stopRecording()}
+   692→   692→                  disabled={phase !== "recording" && phase !== "paused"}
+   693→   693→                  aria-label="پایان و تحلیل"
+   694→   694→                >
+   695→   695→                  <Flag className="size-4" />
+   696→   696→                </Button>
+   697→   697→              </div>
+   698→   698→            </div>
+   699→   699→
+   700→   700→            {/* نوار پیشرفت */}
+   701→   701→            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+   702→   702→              <div
+   703→   703→                className="h-full rounded-full bg-gradient-to-l from-gold to-emerald-500 transition-all duration-500"
+   704→   704→                style={{ width: `${progressPct}%` }}
+   705→   705→              />
+   706→   706→            </div>
+   707→   707→          </div>
+   708→   708→        </div>
+   709→   709→
+   710→   710→        {/* ستون کناری: میکروفون + بازخورد */}
+   711→   711→        <aside className="flex flex-col gap-5">
+   712→   712→          <div className="glass-card rounded-2xl p-4">
+   713→   713→            <div className="mb-3 flex items-center justify-between">
+   714→   714→              <Label className="flex items-center gap-1.5 text-sm font-bold">
+   715→   715→                {phase === "recording" ? (
+   716→   716→                  <Volume2 className="size-4 text-emerald-500" aria-hidden="true" />
+   717→   717→                ) : (
+   718→   718→                  <MicOff className="size-4 text-muted-foreground" aria-hidden="true" />
+   719→   719→                )}
+   720→   720→                میکروفون
+   721→   721→              </Label>
+   722→   722→              <Button
+   723→   723→                size="icon"
+   724→   724→                variant="ghost"
+   725→   725→                className="size-8 rounded-lg"
+   726→   726→                onClick={() => void refreshMics()}
+   727→   727→                aria-label="تازه‌سازی فهرست میکروفون‌ها"
+   728→   728→              >
+   729→   729→                <RotateCcw className="size-3.5" />
+   730→   730→              </Button>
+   731→   731→            </div>
+   732→   732→            <Select value={micId} onValueChange={setMicId}>
+   733→   733→              <SelectTrigger className="w-full rounded-xl" aria-label="انتخاب میکروفون">
+   734→   734→                <SelectValue placeholder="میکروفون پیش‌فرض" />
+   735→   735→              </SelectTrigger>
+   736→   736→              <SelectContent className="nice-scroll max-h-52">
+   737→   737→                <SelectItem value="default">پیش‌فرض سیستم</SelectItem>
+   738→   738→                {mics.map((m, i) => (
+   739→   739→                  <SelectItem key={m.deviceId || i} value={m.deviceId || `dev${i}`}>
+   740→   740→                    {m.label || `میکروفون ${toFa(i + 1)}`}
+   741→   741→                  </SelectItem>
+   742→   742→                ))}
+   743→   743→              </SelectContent>
+   744→   744→            </Select>
+   745→   745→
+   746→   746→            {/* موتور تشخیص گفتار */}
+   747→   747→            <div
+   748→   748→              className={`mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] leading-5 ${
+   749→   749→                browserSpeech === false
+   750→   750→                  ? "border-gold/30 bg-gold/8 text-gold"
+   751→   751→                  : "border-emerald-500/25 bg-emerald-500/8 text-emerald-700 dark:text-emerald-400"
+   752→   752→              }`}
+   753→   753→            >
+   754→   754→              <span
+   755→   755→                className={`size-1.5 shrink-0 rounded-full ${
+   756→   756→                  browserSpeech === false ? "bg-gold" : "bg-emerald-500"
+   757→   757→                } ${phase === "recording" ? "animate-pulse" : ""}`}
+   758→   758→                aria-hidden="true"
+   759→   759→              />
+   760→   760→              {browserSpeech === null
+   761→   761→                ? "در حال بررسی موتور تشخیص…"
+   762→   762→                : browserSpeech
+   763→   763→                  ? "موتور زندهٔ مرورگر فعال — هایلایت کلمه‌به‌کلمه همزمان با تلاوت"
+   764→   764→                  : "مرورگر تو تشخیص زنده ندارد؛ از حالت قطعه‌ای سرور استفاده می‌شود (هر ۶ ثانیه)"}
+   765→   765→            </div>
+   766→   766→            {/* نمایشگر سطح صدا */}
+   767→   767→            <div className="mt-3 flex h-6 items-center gap-1" aria-hidden="true">
+   768→   768→              {Array.from({ length: 14 }).map((_, i) => {
+   769→   769→                const on = level * 60 > i;
+   770→   770→                return (
+   771→   771→                  <span
+   772→   772→                    key={i}
+   773→   773→                    className={`h-full w-1.5 rounded-full transition-colors duration-100 ${
+   774→   774→                      on ? (i > 10 ? "bg-red-500" : i > 7 ? "bg-gold" : "bg-emerald-500") : "bg-muted"
+   775→   775→                    }`}
+   776→   776→                  />
+   777→   777→                );
+   778→   778→              })}
+   779→   779→            </div>
+   780→   780→            <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
+   781→   781→              <Label htmlFor="tr-sw" className="text-xs text-muted-foreground">نمایش ترجمهٔ فارسی</Label>
+   782→   782→              <Switch id="tr-sw" checked={showTranslation} onCheckedChange={st.setShowTranslation} />
+   783→   783→            </div>
+   784→   784→          </div>
+   785→   785→
+   786→   786→          <StudioSettingsCard />
+   787→   787→
+   788→   788→          <div>
+   789→   789→            <h3 className="mb-2 flex items-center gap-1.5 text-sm font-bold">
+   790→   790→              <Bot className="size-4 text-emerald-500" aria-hidden="true" />
+   791→   791→              معلم هوش مصنوعی
+   792→   792→            </h3>
+   793→   793→            <FeedbackPanel />
+   794→   794→          </div>
+   795→   795→        </aside>
+   796→   796→      </div>
+   797→   797→
+   798→   798→      {/* کارت بازبینی نهایی */}
+   799→   799→      {phase === "review" && (
+   800→   800→        <div className="glass-card gold-border-glow mt-6 rounded-3xl p-5 sm:p-7">
+   801→   801→          {analyzing ? (
+   802→   802→            <div className="flex flex-col items-center gap-3 py-8">
+   803→   803→              <Loader2 className="size-8 animate-spin text-gold" aria-hidden="true" />
+   804→   804→              <p className="text-sm text-muted-foreground">معلم هوش مصنوعی در حال تحلیل تلاوت توست…</p>
+   805→   805→            </div>
+   806→   806→          ) : (
+   807→   807→            <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+   808→   808→              <div className="flex flex-col items-center gap-2">
+   809→   809→                <div className="relative size-28">
+   810→   810→                  <svg viewBox="0 0 64 64" className="size-28 -rotate-90">
+   811→   811→                    <circle cx="32" cy="32" r="27" fill="none" strokeWidth="5" className="stroke-muted" />
+   812→   812→                    <circle
+   813→   813→                      cx="32" cy="32" r="27" fill="none" strokeWidth="5" strokeLinecap="round"
+   814→   814→                      className={accuracy >= 90 ? "stroke-emerald-500" : accuracy >= 70 ? "stroke-gold" : "stroke-red-500"}
+   815→   815→                      strokeDasharray={`${(accuracy / 100) * 169.6} 169.6`}
+   816→   816→                    />
+   817→   817→                  </svg>
+   818→   818→                  <span className="absolute inset-0 flex flex-col items-center justify-center">
+   819→   819→                    <span className="text-2xl font-black">{toFa(accuracy)}٪</span>
+   820→   820→                    <span className="text-[10px] text-muted-foreground">دقت</span>
+   821→   821→                  </span>
+   822→   822→                </div>
+   823→   823→                <div className="flex gap-3 text-xs text-muted-foreground">
+   824→   824→                  <span>✗ {toFa(wrongCount)} اشتباه</span>
+   825→   825→                  <span>— {toFa(missedCount)} جاافتاده</span>
+   826→   826→                </div>
+   827→   827→                <p className="text-[11px] text-muted-foreground">
+   828→   828→                  {saved ? "جلسه ذخیره شد ✓" : "جلسه ذخیره نشد"}
+   829→   829→                </p>
+   830→   830→              </div>
+   831→   831→              <div className="space-y-3">
+   832→   832→                {analysis && (
+   833→   833→                  <>
+   834→   834→                    <h3 className="flex items-center gap-2 text-lg font-black">
+   835→   835→                      <Bot className="size-5 text-emerald-500" aria-hidden="true" />
+   836→   836→                      نظر معلم
+   837→   837→                    </h3>
+   838→   838→                    {analysis.summary && <p className="text-sm leading-7 text-foreground/90">{analysis.summary}</p>}
+   839→   839→                    {analysis.scoreNote && (
+   840→   840→                      <p className="text-xs leading-6 text-muted-foreground">{analysis.scoreNote}</p>
+   841→   841→                    )}
+   842→   842→                    {analysis.tips?.length > 0 && (
+   843→   843→                      <ul className="flex flex-col gap-1.5">
+   844→   844→                        {analysis.tips.map((tip, i) => (
+   845→   845→                          <li key={i} className="flex items-start gap-2 text-xs leading-6 text-foreground/85">
+   846→   846→                            <CheckCheck className="mt-1 size-3.5 shrink-0 text-gold" aria-hidden="true" />
+   847→   847→                            {tip}
+   848→   848→                          </li>
+   849→   849→                        ))}
+   850→   850→                      </ul>
+   851→   851→                    )}
+   852→   852→                    {analysis.mistakes?.length > 0 && (
+   853→   853→                      <div className="nice-scroll max-h-44 space-y-1.5 overflow-y-auto rounded-xl border border-red-500/20 bg-red-500/5 p-3">
+   854→   854→                        {analysis.mistakes.map((m, i) => (
+   855→   855→                          <div key={i} className="flex items-start gap-2 text-xs leading-6">
+   856→   856→                            <AlertTriangle className="mt-1 size-3.5 shrink-0 text-red-500" aria-hidden="true" />
+   857→   857→                            <span>
+   858→   858→                              <b>آیهٔ {toFa(m.ayahNumber)}</b> —{" "}
+   859→   859→                              {m.kind === "missed" ? "جاافتادگی" : m.kind === "added" ? "اضافه‌خوانی" : "کلمهٔ اشتباه"}
+   860→   860→                              {m.expected ? `: انتظار «${m.expected}»` : ""}
+   861→   861→                              {m.heard ? `، شنیده شد «${m.heard}»` : ""}
+   862→   862→                              {m.note ? ` — ${m.note}` : ""}
+   863→   863→                            </span>
+   864→   864→                          </div>
+   865→   865→                        ))}
+   866→   866→                      </div>
+   867→   867→                    )}
+   868→   868→                  </>
+   869→   869→                )}
+   870→   870→                <div className="flex flex-wrap gap-2 pt-1">
+   871→   871→                  <Button
+   872→   872→                    onClick={() => {
+   873→   873→                      setAnalysis(null);
+   874→   874→                      savedRef.current = false;
+   875→   875→                      setSaved(false);
+   876→   876→                      void loadRange(surah?.n ?? 1, fromAyah, toAyah);
+   877→   877→                    }}
+   878→   878→                    className="rounded-xl bg-emerald-600 font-bold hover:bg-emerald-500"
+   879→   879→                  >
+   880→   880→                    <RotateCcw className="size-4" aria-hidden="true" />
+   881→   881→                    تلاوت مجدد
+   882→   882→                  </Button>
+   883→   883→                  <Button
+   884→   884→                    variant="outline"
+   885→   885→                    onClick={() => {
+   886→   886→                      st.reset();
+   887→   887→                      setSelSurah("");
+   888→   888→                      setSelFrom("");
+   889→   889→                      setSelTo("");
+   890→   890→                      setAnalysis(null);
+   891→   891→                      savedRef.current = false;
+   892→   892→                      setSaved(false);
+   893→   893→                    }}
+   894→   894→                    className="rounded-xl"
+   895→   895→                  >
+   896→   896→                    جلسهٔ جدید
+   897→   897→                  </Button>
+   898→   898→                </div>
+   899→   899→              </div>
+   900→   900→            </div>
+   901→   901→          )}
+   902→   902→        </div>
+   903→   903→      )}
+   904→   904→    </section>
+   905→   905→  );
+   906→   906→}
+   907→   907→
+   908→   908→function ayahNumbers(surahNum: string, all: SurahMetaClient[]): number[] {
+   909→   909→  const s = all.find((x) => String(x.n) === surahNum);
+   910→   910→  if (!s) return [];
+   911→   911→  return Array.from({ length: s.count }, (_, i) => i + 1);
+   912→   912→}
+   913→   913→
+   914→   914→/* ------------------------------------------------------------------ */
+   915→   915→/* تنظیمات پیشرفتهٔ استودیو — همه‌چیز قابل شخصی‌سازی                    */
+   916→   916→/* ------------------------------------------------------------------ */
+   917→   917→
+   918→   918→function SettingRow({
+   919→   919→  label,
+   920→   920→  hint,
+   921→   921→  children,
+   922→   922→}: {
+   923→   923→  label: string;
+   924→   924→  hint?: string;
+   925→   925→  children: ReactNode;
+   926→   926→}) {
+   927→   927→  return (
+   928→   928→    <div className="flex items-center justify-between gap-3">
+   929→   929→      <div className="flex flex-col gap-0.5">
+   930→   930→        <span className="text-xs font-bold text-foreground/90">{label}</span>
+   931→   931→        {hint && <span className="text-[10px] leading-4 text-muted-foreground">{hint}</span>}
+   932→   932→      </div>
+   933→   933→      <div className="shrink-0">{children}</div>
+   934→   934→    </div>
+   935→   935→  );
+   936→   936→}
+   937→   937→
+   938→   938→function SettingsSectionTitle({ children }: { children: ReactNode }) {
+   939→   939→  return (
+   940→   940→    <p className="flex items-center gap-2 text-[11px] font-black tracking-wider text-gold/90">
+   941→   941→      <span aria-hidden="true" className="h-px w-4 bg-gradient-to-l from-gold/60 to-transparent" />
+   942→   942→      {children}
+   943→   943→    </p>
+   944→   944→  );
+   945→   945→}
+   946→   946→
+   947→   947→function StudioSettingsCard() {
+   948→   948→  const cfg = useSettings();
+   949→   949→  const update = useSettings((s) => s.update);
+   950→   950→  const showTranslation = useStudio((s) => s.showTranslation);
+   951→   951→  const setShowTranslation = useStudio((s) => s.setShowTranslation);
+   952→   952→  const [open, setOpen] = useState(false);
+   953→   953→
+   954→   954→  return (
+   955→   955→    <Collapsible open={open} onOpenChange={setOpen}>
+   956→   956→      <div className="glass-card rounded-2xl p-4">
+   957→   957→        <CollapsibleTrigger asChild>
+   958→   958→          <button
+   959→   959→            type="button"
+   960→   960→            className="flex w-full items-center justify-between rounded-lg p-1 transition-colors hover:bg-gold/5"
+   961→   961→            aria-expanded={open}
+   962→   962→          >
+   963→   963→            <span className="flex items-center gap-1.5 text-sm font-bold">
+   964→   964→              <SlidersHorizontal className="size-4 text-gold" aria-hidden="true" />
+   965→   965→              تنظیمات پیشرفته
+   966→   966→              <span className="rounded-full bg-gold/12 px-2 py-0.5 text-[9px] font-bold text-gold">
+   967→   967→                {toFa(13)} گزینه
+   968→   968→              </span>
+   969→   969→            </span>
+   970→   970→            <ChevronDown
+   971→   971→              className={`size-4 text-muted-foreground transition-transform duration-300 ${open ? "rotate-180" : ""}`}
+   972→   972→              aria-hidden="true"
+   973→   973→            />
+   974→   974→          </button>
+   975→   975→        </CollapsibleTrigger>
+   976→   976→
+   977→   977→        <CollapsibleContent className="overflow-hidden">
+   978→   978→          <div className="mt-4 space-y-4">
+   979→   979→            {/* صدا و هشدار */}
+   980→   980→            <div className="space-y-3">
+   981→   981→              <SettingsSectionTitle>صدا و هشدار</SettingsSectionTitle>
+   982→   982→              <SettingRow label="صداهای برنامه" hint="بوق خطا، تشویق، شمارش معکوس و پایان جلسه">
+   983→   983→                <Switch checked={cfg.sounds} onCheckedChange={(v) => update("sounds", v)} aria-label="صداهای برنامه" />
+   984→   984→              </SettingRow>
+   985→   985→              <SettingRow label="هشدار لحظه‌ای خطا" hint="همان لحظهٔ شنیدن خطا یا جاافتادگی هشدار می‌دهد">
+   986→   986→                <Select value={cfg.errorAlert} onValueChange={(v) => update("errorAlert", v as ErrorAlert)}>
+   987→   987→                  <SelectTrigger className="w-40 rounded-lg" aria-label="نوع هشدار خطا">
+   988→   988→                    <SelectValue />
+   989→   989→                  </SelectTrigger>
+   990→   990→                  <SelectContent>
+   991→   991→                    {(Object.keys(ERROR_ALERT_LABELS) as ErrorAlert[]).map((k) => (
+   992→   992→                      <SelectItem key={k} value={k}>{ERROR_ALERT_LABELS[k]}</SelectItem>
+   993→   993→                    ))}
+   994→   994→                  </SelectContent>
+   995→   995→                </Select>
+   996→   996→              </SettingRow>
+   997→   997→              <SettingRow label="بلندی صدا">
+   998→   998→                <Slider
+   999→   999→                  value={[cfg.volume]}
+  1000→  1000→                  min={0.1}
+  1001→  1001→                  max={1}
+  1002→  1002→                  step={0.1}
+  1003→  1003→                  onValueChange={(v) => update("volume", v[0] ?? 0.7)}
+  1004→  1004→                  className="w-32"
+  1005→  1005→                  aria-label="بلندی صدا"
+  1006→  1006→                />
+  1007→  1007→              </SettingRow>
+  1008→  1008→              <SettingRow label="تشویق‌ها" hint="پیام و صدای تشویق پس از تلاوت روان">
+  1009→  1009→                <Switch checked={cfg.praise} onCheckedChange={(v) => update("praise", v)} aria-label="تشویق‌ها" />
+  1010→  1010→              </SettingRow>
+  1011→  1011→            </div>
+  1012→  1012→
+  1013→  1013→            <Separator className="bg-gold/10" />
+  1014→  1014→
+  1015→  1015→            {/* دقت تشخیص */}
+  1016→  1016→            <div className="space-y-3">
+  1017→  1017→              <SettingsSectionTitle>دقت تشخیص</SettingsSectionTitle>
+  1018→  1018→              <SettingRow label="سخت‌گیری تطبیق" hint={STRICTNESS_LABELS[cfg.strictness].hint}>
+  1019→  1019→                <Select value={cfg.strictness} onValueChange={(v) => update("strictness", v as Strictness)}>
+  1020→  1020→                  <SelectTrigger className="w-28 rounded-lg" aria-label="سخت‌گیری تطبیق">
+  1021→  1021→                    <SelectValue />
+  1022→  1022→                  </SelectTrigger>
+  1023→  1023→                  <SelectContent>
+  1024→  1024→                    {(Object.keys(STRICTNESS_LABELS) as Strictness[]).map((k) => (
+  1025→  1025→                      <SelectItem key={k} value={k}>{STRICTNESS_LABELS[k].title}</SelectItem>
+  1026→  1026→                    ))}
+  1027→  1027→                  </SelectContent>
+  1028→  1028→                </Select>
+  1029→  1029→              </SettingRow>
+  1030→  1030→              <SettingRow label="بازخورد لحظه‌ای معلم" hint="توست فوری با جزئیات خطا هنگام تلاوت">
+  1031→  1031→                <Switch checked={cfg.liveFeedback} onCheckedChange={(v) => update("liveFeedback", v)} aria-label="بازخورد لحظه‌ای" />
+  1032→  1032→              </SettingRow>
+  1033→  1033→              <SettingRow label="هایلایت زندهٔ موقت" hint="کلمه‌هایی که همین حالا می‌خوانی همان لحظه طلایی می‌شوند">
+  1034→  1034→                <Switch checked={cfg.ghostPreview} onCheckedChange={(v) => update("ghostPreview", v)} aria-label="هایلایت زندهٔ موقت" />
+  1035→  1035→              </SettingRow>
+  1036→  1036→            </div>
+  1037→  1037→
+  1038→  1038→            <Separator className="bg-gold/10" />
+  1039→  1039→
+  1040→  1040→            {/* نمایش و متن */}
+  1041→  1041→            <div className="space-y-3">
+  1042→  1042→              <SettingsSectionTitle>نمایش و متن</SettingsSectionTitle>
+  1043→  1043→              <SettingRow label="ترجمهٔ فارسی">
+  1044→  1044→                <Switch checked={showTranslation} onCheckedChange={setShowTranslation} aria-label="نمایش ترجمه" />
+  1045→  1045→              </SettingRow>
+  1046→  1046→              <SettingRow label="اندازهٔ متن آیات">
+  1047→  1047→                <Select value={cfg.textSize} onValueChange={(v) => update("textSize", v as TextSize)}>
+  1048→  1048→                  <SelectTrigger className="w-28 rounded-lg" aria-label="اندازهٔ متن">
+  1049→  1049→                    <SelectValue />
+  1050→  1050→                  </SelectTrigger>
+  1051→  1051→                  <SelectContent>
+  1052→  1052→                    {(Object.keys(TEXT_SIZE_LABELS) as TextSize[]).map((k) => (
+  1053→  1053→                      <SelectItem key={k} value={k}>{TEXT_SIZE_LABELS[k]}</SelectItem>
+  1054→  1054→                    ))}
+  1055→  1055→                  </SelectContent>
+  1056→  1056→                </Select>
+  1057→  1057→              </SettingRow>
+  1058→  1058→              <SettingRow label="پیمایش خودکار" hint="آیهٔ فعال همیشه جلوی چشم بماند">
+  1059→  1059→                <Switch checked={cfg.autoScroll} onCheckedChange={(v) => update("autoScroll", v)} aria-label="پیمایش خودکار" />
+  1060→  1060→              </SettingRow>
+  1061→  1061→              <SettingRow label="تمرین کور" hint="کلمات پیش‌رو پنهان می‌شوند تا از حفظ بخوانی — چالش‌برانگیز!">
+  1062→  1062→                <Switch checked={cfg.hideUpcoming} onCheckedChange={(v) => update("hideUpcoming", v)} aria-label="تمرین کور" />
+  1063→  1063→              </SettingRow>
+  1064→  1064→            </div>
+  1065→  1065→
+  1066→  1066→            <Separator className="bg-gold/10" />
+  1067→  1067→
+  1068→  1068→            {/* جلسه */}
+  1069→  1069→            <div className="space-y-3">
+  1070→  1070→              <SettingsSectionTitle>جلسه</SettingsSectionTitle>
+  1071→  1071→              <SettingRow label="شمارش معکوس ۳-۲-۱" hint="چند ثانیه فرصت آماده‌شدن قبل از شروع">
+  1072→  1072→                <Switch checked={cfg.countdown} onCheckedChange={(v) => update("countdown", v)} aria-label="شمارش معکوس" />
+  1073→  1073→              </SettingRow>
+  1074→  1074→              <SettingRow label="توقف خودکار در پایان" hint="وقتی همهٔ آیات را خواندی جلسه تمام و تحلیل می‌شود">
+  1075→  1075→                <Switch checked={cfg.autoStop} onCheckedChange={(v) => update("autoStop", v)} aria-label="توقف خودکار" />
+  1076→  1076→              </SettingRow>
+  1077→  1077→              <div className="flex justify-end pt-1">
+  1078→  1078→                <Button
+  1079→  1079→                  variant="ghost"
+  1080→  1080→                  size="sm"
+  1081→  1081→                  className="h-7 rounded-lg text-[11px] text-muted-foreground hover:text-foreground"
+  1082→  1082→                  onClick={() => useSettings.getState().reset()}
+  1083→  1083→                >
+  1084→  1084→                  <RotateCcw className="size-3" aria-hidden="true" />
+  1085→  1085→                  بازگشت به پیش‌فرض‌ها
+  1086→  1086→                </Button>
+  1087→  1087→              </div>
+  1088→  1088→            </div>
+  1089→  1089→          </div>
+  1090→  1090→        </CollapsibleContent>
+  1091→  1091→      </div>
+  1092→  1092→    </Collapsible>
+  1093→  1093→  );
+  1094→  1094→}
+  1095→  1095→
