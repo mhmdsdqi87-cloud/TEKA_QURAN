@@ -3,7 +3,7 @@
 import { useTheme } from "next-themes";
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { BookOpenText, ChartNoAxesColumn, LogIn, LogOut, Mic, Moon, Sparkles, Sun } from "lucide-react";
+import { BookOpenText, ChartNoAxesColumn, Download, LogIn, LogOut, Mic, Moon, Sparkles, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-store";
 
@@ -14,14 +14,42 @@ const NAV = [
   { href: "#stats", label: "آمار", icon: ChartNoAxesColumn },
 ];
 
+/** رویداد پیش‌ازنصب کروم (اندروید/دسکتاپ) */
+interface InstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
 export default function SiteHeader() {
   const { resolvedTheme, setTheme } = useTheme();
   const [scrolled, setScrolled] = useState(false);
+  const [installEvt, setInstallEvt] = useState<InstallPromptEvent | null>(null);
   const { user, ready, refresh, openDialog, logout } = useAuth();
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // دکمهٔ نصب برنامه (PWA) — فقط وقتی مرورگر اجازهٔ نصب بدهد (اندروید کروم و…)
+  useEffect(() => {
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setInstallEvt(e as InstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+  }, []);
+
+  const doInstall = async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    try {
+      await installEvt.userChoice;
+    } catch {
+      /* ignore */
+    }
+    setInstallEvt(null);
+  };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -70,6 +98,20 @@ export default function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-2">
+          {/* نصب برنامه (PWA) — وقتی مرورگر اجازه دهد نمایش داده می‌شود */}
+          {installEvt && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void doInstall()}
+              className="rounded-xl border-emerald-500/40 font-bold text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-400"
+              aria-label="نصب برنامهٔ حافظ روی گوشی"
+              title="نصب برنامه روی گوشی یا دسکتاپ"
+            >
+              <Download className="size-4" aria-hidden="true" />
+              نصب
+            </Button>
+          )}
           {/* حساب کاربری */}
           {user ? (
             <div

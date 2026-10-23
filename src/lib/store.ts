@@ -9,7 +9,7 @@ import {
   type MistakeEvent,
   type TrackWord,
 } from "@/lib/alignment";
-import { seqAlign, seqScore } from "@/lib/sequencer";
+import { seqAlign, seqScore, stripOpeningBasmala } from "@/lib/sequencer";
 import { useSettings } from "@/lib/settings";
 
 export interface AyahLite {
@@ -62,6 +62,8 @@ export interface StudioState {
   showTranslation: boolean;
   lastAlignQuality: number;
   preview: PreviewState | null;
+  /** دورهای تکرار باقی‌ماندهٔ جلسه (از تنظیمات repeatRounds) */
+  roundsLeft: number;
 
   setRange: (surah: SurahLite, from: number, to: number, ayahs: AyahLite[]) => void;
   setShowTranslation: (v: boolean) => void;
@@ -113,6 +115,7 @@ const emptyState = {
   showTranslation: true,
   lastAlignQuality: 0,
   preview: null as PreviewState | null,
+  roundsLeft: 0,
 };
 
 export const useStudio = create<StudioState>((set, get) => ({
@@ -138,6 +141,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       elapsedSec: 0,
       heardSegments: [],
       preview: null,
+      roundsLeft: 0,
     });
   },
 
@@ -153,6 +157,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     set((s) => ({
       phase: "recording",
       startedAt: s.startedAt ?? Date.now(),
+      roundsLeft: useSettings.getState().repeatRounds,
       feedback: [
         ...s.feedback,
         {
@@ -178,20 +183,65 @@ export const useStudio = create<StudioState>((set, get) => ({
     if (!text.trim() || s.track.length === 0) return;
     set({ preview: null }); // نتیجهٔ نهایی، پیش‌نمایش را جایگزین می‌کند
 
+    // ——— باسمهٔ آغازین: اگر شنیده شد (به‌جز فاتحه)، حذف می‌شود تا خطا نشمارد ———
+    let heard = text;
+    if ((s.surah?.n ?? 0) !== 1) {
+      const stripped = stripOpeningBasmala(text);
+      if (stripped !== text) {
+        heard = stripped;
+        if (!heard.trim()) {
+          // فقط باسمه خوانده شد — میکروفون سالم است؛ فرصت شروع تلاوت
+          set({
+            heardSegments: [...s.heardSegments, text],
+            feedback: appendFeedback(s.feedback, {
+              id: `m${++msgCounter}`,
+              kind: "info",
+              text: "بسم‌الله — شنیدم! حالا تلاوت آیات را شروع کن؛ کلمه‌به‌کلمه دنبالت هستم.",
+              at: Date.now(),
+            }),
+          });
+          return;
+        }
+      }
+    }
+
     // ضدتکرار دوم: همان متن پشت‌سرهم با فاصلهٔ خیلی کم را نادیده بگیر
     const lastSeg = s.heardSegments[s.heardSegments.length - 1];
-    if (lastSeg && lastSeg.trim() === text.trim() && s.feedback.length > 0) {
+    if (lastSeg && lastSeg.trim() === heard.trim() && s.feedback.length > 0) {
       const lastFb = s.feedback[s.feedback.length - 1];
       if (Date.now() - lastFb.at < 800) return;
     }
 
     if (s.pos >= s.track.length) {
+      // ——— تکرار خودکار بازه (تثبیت حفظ) ———
+      const repCfg = useSettings.getState().repeatRounds;
+      if (repCfg > 0 && s.roundsLeft > 0) {
+        const fresh = s.track.map((w) => ({ ...w, status: "pending" as const }));
+        set({
+          track: fresh,
+          pos: 0,
+          roundsLeft: s.roundsLeft - 1,
+          accuracy: 100,
+          wordsCorrect: 0,
+          heardSegments: [],
+          preview: null,
+          feedback: appendFeedback(s.feedback, {
+            id: `m${++msgCounter}`,
+            kind: "praise",
+            text: `یک دور کامل شد — ماشاءالله! دور تکرار شروع می‌شود (تثبیت حفظ). از اول بخوان.`,
+            at: Date.now(),
+          }),
+        });
+        // اعمال همین قطعهٔ شنیده‌شده روی دور تازه
+        get().applyHeard(text, alternatives);
+        return;
+      }
       set({
-        heardSegments: [...s.heardSegments, text],
+        heardSegments: [...s.heardSegments, heard],
         feedback: appendFeedback(s.feedback, {
           id: `m${++msgCounter}`,
           kind: "info",
-          text: `شنیدم: «${text}» — اما بازهٔ انتخابی تمام شده است. اگر ادامه می‌دهی، بازهٔ جدید انتخاب کن.`,
+          text: `شنیدم: «${heard}» — اما بازهٔ انتخابی تمام شده است. اگر ادامه می‌دهی، بازهٔ جدید انتخاب کن.`,
           at: Date.now(),
         }),
       });
@@ -206,7 +256,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     const makeClone = () => s.track.map((w) => ({ ...w }));
 
     let track = makeClone();
-    let res = seqAlign(track.slice(s.pos), s.pos, text, preset);
+    let res = seqAlign(track.slice(s.pos), s.pos, heard, preset);
     let bestScore = seqScore(res, s.pos);
 
     if (alternatives && alternatives.length > 1) {
@@ -224,16 +274,16 @@ export const useStudio = create<StudioState>((set, get) => ({
     }
 
     const fb: FeedbackMsg[] = [...s.feedback];
-    let heardSegments = [...s.heardSegments, text];
+    let heardSegments = [...s.heardSegments, heard];
 
     // ——— تکرار آیه: اگر هیچ‌کدام جلو نچسبید، ببین آیا عقب‌تر (آیه‌ای که رد شده) مچ می‌شود ———
     // تکرار هرگز نشانگر را جابه‌جا نمی‌کند (رفع «می‌پره»)
     if (res.matchedCount === 0 && s.pos >= 4) {
       const backStart = Math.max(0, s.pos - 24);
       const bWin = s.track.slice(backStart, s.pos).map((w) => ({ ...w }));
-      const b = seqAlign(bWin, backStart, text, preset);
+      const b = seqAlign(bWin, backStart, heard, preset);
       if (b.matchedCount >= 2) {
-        fb.push({ id: `m${++msgCounter}`, kind: "heard", text: text, at: Date.now() });
+        fb.push({ id: `m${++msgCounter}`, kind: "heard", text: heard, at: Date.now() });
         fb.push({
           id: `m${++msgCounter}`,
           kind: "praise",
@@ -280,7 +330,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       });
     }
 
-    fb.push({ id: `m${++msgCounter}`, kind: "heard", text: text, at: Date.now() });
+    fb.push({ id: `m${++msgCounter}`, kind: "heard", text: heard, at: Date.now() });
 
     if (res.wrong.length > 0) {
       const w = res.wrong[0];
@@ -430,12 +480,15 @@ export const useStudio = create<StudioState>((set, get) => ({
     if (!text.trim() || s.track.length === 0) return;
     if (s.pos >= s.track.length) return;
     if (s.phase !== "recording") return;
+    // باسمهٔ آغازین را از پیش‌نمایش هم حذف کن تا هایلایت نپرد
+    const heard = (s.surah?.n ?? 0) !== 1 ? stripOpeningBasmala(text) : text;
+    if (!heard.trim()) return;
     const preset = STRICTNESS_PRESETS[useSettings.getState().strictness];
-    const segWords = text.trim().split(/\s+/).length;
+    const segWords = heard.trim().split(/\s+/).length;
     const winStart = s.pos;
     const winLen = Math.min(s.track.length - winStart, segWords + 6);
     const win = s.track.slice(winStart, winStart + winLen).map((w) => ({ ...w }));
-    const res = seqAlign(win, winStart, text, preset);
+    const res = seqAlign(win, winStart, heard, preset);
     const overrides: Record<number, TrackWord["status"]> = {};
     for (const m of res.marks) {
       if (s.track[m.idx]?.status !== m.status) {

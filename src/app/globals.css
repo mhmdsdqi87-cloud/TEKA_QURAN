@@ -277,3 +277,34 @@
   pointer-events: none;
   transition: filter 0.6s ease, opacity 0.6s ease;
 }
+
+/* ------------------------------------------------------------------ */
+/* بهینه‌سازی موبایل و اندروید کروم (Task 18)                          */
+/* ------------------------------------------------------------------ */
+
+/* هایلایت آبی لمس اندروید/آی‌او‌اس را حذف کن — تجربهٔ اپ‌مانند */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* اسکرول باکِنس طولانی موبایل (pull-to-refresh وسط تلاوت) آزاردهنده است */
+@media (pointer: coarse) {
+  body {
+    overscroll-behavior-y: contain;
+  }
+}
+
+/* هدف لمسی راحت‌تر برای کلمات قابل‌کلیک متن آیات در موبایل */
+@media (pointer: coarse) {
+  .word {
+    padding-block: 2px;
+  }
+}
+
+/* احترام به کاربرانی که حرکت کمتر می‌خواهند — کل انیمیشن‌های تزئینی */
+@media (prefers-reduced-motion: reduce) {
+  .float-slow,
+  .rec-pulse {
+    animation: none !important;
+  }
+}

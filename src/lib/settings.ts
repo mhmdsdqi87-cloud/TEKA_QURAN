@@ -35,6 +35,8 @@ export interface StudioSettings {
   countdown: boolean;
   /** اندازهٔ متن آیات */
   textSize: TextSize;
+  /** تکرار خودکار بازه پس از پایان (۰ = خاموش) — تثبیت حفظ */
+  repeatRounds: number;
 }
 
 export const defaultSettings: StudioSettings = {
@@ -50,6 +52,7 @@ export const defaultSettings: StudioSettings = {
   hideUpcoming: false,
   countdown: true,
   textSize: "md",
+  repeatRounds: 0,
 };
 
 interface SettingsState extends StudioSettings {
@@ -85,4 +88,11 @@ export const TEXT_SIZE_LABELS: Record<TextSize, string> = {
   sm: "کوچک",
   md: "متوسط",
   lg: "بزرگ",
+};
+
+export const REPEAT_ROUNDS_LABELS: Record<string, string> = {
+  "0": "خاموش",
+  "1": "۱ دور تکرار",
+  "2": "۲ دور تکرار",
+  "3": "۳ دور تکرار",
 };

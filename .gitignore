@@ -55,3 +55,4 @@ server.log
 # sqlite دیتابیس محلی
 db/*.db
 db/*.db-journal
+quran.json.bak
