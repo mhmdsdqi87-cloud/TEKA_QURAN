@@ -33,8 +33,10 @@ const VERSES = [
   },
 ];
 
-const TOTAL_MS = 13000;
-const SLICE = TOTAL_MS / VERSES.length;
+const FULL_MS = 13000; // ورود اول هر نشست — تجربهٔ سینمایی کامل
+const QUICK_MS = 4500; // بازدیدهای بعدی همان نشست — سریع برای موبایل
+const SEEN_KEY = "hafez-splash-seen"; // timestamp در sessionStorage
+const SEEN_WINDOW = 30 * 60 * 1000; // ۳۰ دقیقه
 
 export default function SplashScreen() {
   // از اولین رندر نمایش داده می‌شود — اولین چیزی که کاربر می‌بیند
@@ -42,15 +44,31 @@ export default function SplashScreen() {
   const [idx, setIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const readyRef = useRef(false);
+  // ورود اول نشست = اسپلش کامل؛ ورودهای بعدی = نسخهٔ سریع
+  const [totalMs] = useState<number>(() => {
+    try {
+      const ts = Number(sessionStorage.getItem(SEEN_KEY) ?? 0);
+      if (ts > 0 && Date.now() - ts < SEEN_WINDOW) return QUICK_MS;
+    } catch {
+      /* ignore */
+    }
+    return FULL_MS;
+  });
+  const SLICE = totalMs / VERSES.length;
 
   useEffect(() => {
+    try {
+      sessionStorage.setItem(SEEN_KEY, String(Date.now()));
+    } catch {
+      /* ignore */
+    }
     const start = performance.now();
     const tick = setInterval(() => {
-      const timeP = (performance.now() - start) / TOTAL_MS;
+      const timeP = (performance.now() - start) / totalMs;
       // تا آماده‌شدن دادهٔ قرآن حداکثر ۹۲٪ پیش می‌رود (لود واقعی)
       const p = Math.min(timeP, readyRef.current ? 1 : 0.92);
       setProgress(p);
-      const i = Math.min(VERSES.length - 1, Math.floor((p * TOTAL_MS) / SLICE));
+      const i = Math.min(VERSES.length - 1, Math.floor((p * totalMs) / SLICE));
       setIdx(i);
       if (p >= 1) {
         clearInterval(tick);
@@ -72,17 +90,17 @@ export default function SplashScreen() {
       .finally(() => {
         readyRef.current = true;
       });
-    // اطمینان: بعد از ۱۷ ثانیه به‌هرحال تمام می‌شود
+    // اطمینان: بعد از ۴ ثانیهٔ اضافه به‌هرحال تمام می‌شود
     const force = setTimeout(() => {
       readyRef.current = true;
-    }, 17000);
+    }, totalMs + 4000);
 
     return () => {
       clearInterval(tick);
       clearTimeout(force);
       void prewarm;
     };
-  }, []);
+  }, [totalMs, SLICE]);
 
   // قفل اسکرول هنگام اسپلش
   useEffect(() => {

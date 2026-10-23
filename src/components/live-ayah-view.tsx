@@ -20,6 +20,8 @@ export default function LiveAyahView() {
   const showTranslation = useStudio((s) => s.showTranslation);
   const phase = useStudio((s) => s.phase);
   const jumpTo = useStudio((s) => s.jumpTo);
+  const surah = useStudio((s) => s.surah);
+  const fromAyah = useStudio((s) => s.fromAyah);
   const autoScroll = useSettings((s) => s.autoScroll);
   const hideUpcoming = useSettings((s) => s.hideUpcoming);
   const textSize = useSettings((s) => s.textSize);
@@ -87,10 +89,20 @@ export default function LiveAyahView() {
   return (
     <div
       ref={scrollRef}
-      className="nice-scroll max-h-[52vh] min-h-56 overflow-y-auto rounded-2xl border border-gold/15 bg-card/50 p-4 sm:p-6"
+      className="nice-scroll max-h-[56svh] min-h-56 overflow-y-auto rounded-2xl border border-gold/15 bg-card/50 p-4 sm:p-6"
       role="region"
       aria-label="متن زندهٔ تلاوت"
     >
+      {/* باسمهٔ تزئینی آغاز سوره — جزو کلمات قابل ردیابی نیست (بعد از فیکس داده) */}
+      {fromAyah === 1 && surah && surah.n !== 1 && surah.n !== 9 && (
+        <p
+          dir="rtl"
+          aria-label="بسم الله الرحمن الرحیم"
+          className="mb-3 text-center font-quran text-[1.1rem] text-gold/75 sm:text-xl"
+        >
+          بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
+        </p>
+      )}
       <div className="flex flex-col gap-5">
         {groups.map((g) => {
           const isActive = g.ayahIdx === activeAyahIdx && !done;

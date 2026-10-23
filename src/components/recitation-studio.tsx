@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   AlertTriangle,
   Bot,
+  Bookmark,
   CheckCheck,
   ChevronDown,
   Flag,
@@ -15,6 +16,7 @@ import {
   Play,
   RotateCcw,
   SlidersHorizontal,
+  Sparkles,
   Square,
   Target,
   Volume2,
@@ -44,6 +46,7 @@ import { useStudio, type AyahLite, type SurahLite } from "@/lib/store";
 import {
   useSettings,
   ERROR_ALERT_LABELS,
+  REPEAT_ROUNDS_LABELS,
   STRICTNESS_LABELS,
   TEXT_SIZE_LABELS,
   type ErrorAlert,
@@ -62,6 +65,47 @@ interface AnalyzeResult {
   mistakes: { ayahNumber: number; kind: string; expected: string; heard: string; note: string }[];
   fallback?: boolean;
 }
+
+/** نشانک ادامهٔ حفظ — آخرین بازهٔ تلاوت کاربر (localStorage) */
+interface HafezBookmark {
+  n: number;
+  name: string;
+  from: number;
+  to: number;
+  at: number;
+}
+
+function loadBookmark(): HafezBookmark | null {
+  try {
+    const raw = localStorage.getItem("hafez-bookmark-v1");
+    if (!raw) return null;
+    const b = JSON.parse(raw) as HafezBookmark;
+    if (typeof b.n === "number" && typeof b.from === "number" && typeof b.to === "number") return b;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function saveBookmark(b: HafezBookmark) {
+  try {
+    localStorage.setItem("hafez-bookmark-v1", JSON.stringify(b));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** شروع سریع — بازه‌های پرکاربرد برای تمرین روزانه (یک‌ضرب، مخصوص موبایل) */
+const QUICK_STARTS: { label: string; n: number; from: number; to: number }[] = [
+  { label: "فاتحه", n: 1, from: 1, to: 7 },
+  { label: "آیةالکرسی", n: 2, from: 255, to: 255 },
+  { label: "اخلاص", n: 112, from: 1, to: 4 },
+  { label: "کوثر", n: 108, from: 1, to: 3 },
+  { label: "ملک ۱-۱۰", n: 67, from: 1, to: 10 },
+  { label: "کهف ۱-۱۰", n: 18, from: 1, to: 10 },
+  { label: "یس ۱-۱۲", n: 36, from: 1, to: 12 },
+  { label: "نور ۳۵", n: 24, from: 35, to: 35 },
+];
 
 const GRADE_STYLES: Record<string, string> = {
   "درخشان": "border-emerald-500/40 bg-emerald-500/10 text-emerald-600",
@@ -123,6 +167,12 @@ export default function RecitationStudio() {
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
   const [saved, setSaved] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [bookmark, setBookmark] = useState<HafezBookmark | null>(null);
+
+  // نشانک ادامهٔ حفظ — فقط سمت کلاینت (localStorage)
+  useEffect(() => {
+    setBookmark(loadBookmark());
+  }, []);
 
   const recorderRef = useRef<RecitationRecorder | null>(null);
   const engineRef = useRef<SpeechEngine | null>(null);
@@ -198,6 +248,16 @@ export default function RecitationStudio() {
   );
 
   /* ---------- انتخاب سوره ---------- */
+  const applyRange = useCallback(
+    (n: number, from: number, to: number) => {
+      setSelSurah(String(n));
+      setSelFrom(String(from));
+      setSelTo(String(to));
+      void loadRange(n, from, to);
+    },
+    [loadRange]
+  );
+
   const handleSurahChange = (v: string) => {
     setSelSurah(v);
     const s = allSurahs.find((x) => String(x.n) === v);
@@ -414,6 +474,19 @@ export default function RecitationStudio() {
     const c = useSettings.getState();
     if (c.sounds) sfx.done(c.volume);
     st.finish();
+    // ——— نشانک ادامهٔ حفظ: آخرین بازه برای شروع سریع جلسهٔ بعد ———
+    const fin = useStudio.getState();
+    if (fin.surah && fin.track.length > 0) {
+      const b: HafezBookmark = {
+        n: fin.surah.n,
+        name: fin.surah.name,
+        from: fin.fromAyah,
+        to: fin.toAyah,
+        at: Date.now(),
+      };
+      saveBookmark(b);
+      setBookmark(b);
+    }
   }, [st, stopWatchdog]);
 
   const togglePause = useCallback(() => {
@@ -632,6 +705,36 @@ export default function RecitationStudio() {
 
       {/* انتخاب بازه */}
       <div className="glass-card gold-border-glow mb-5 rounded-2xl p-4 sm:p-5">
+        {/* شروع سریع: بازه‌های پرکاربرد + ادامهٔ حفظ — یک‌ضرب، عالی برای موبایل */}
+        <div className="mb-4">
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-black tracking-wider text-gold/90">
+            <Sparkles className="size-3.5" aria-hidden="true" />
+            شروع سریع
+          </div>
+          <div className="nice-scroll -mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="group" aria-label="بازه‌های پیشنهادی">
+            {bookmark && (
+              <button
+                type="button"
+                onClick={() => applyRange(bookmark.n, bookmark.from, bookmark.to)}
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-2 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-400"
+              >
+                <Bookmark className="size-3.5" aria-hidden="true" />
+                ادامهٔ حفظ: {bookmark.name.replace("سُورَةُ ", "")} {toFa(bookmark.from)}–{toFa(bookmark.to)}
+              </button>
+            )}
+            {QUICK_STARTS.map((q) => (
+              <button
+                key={q.label}
+                type="button"
+                onClick={() => applyRange(q.n, q.from, q.to)}
+                className="shrink-0 rounded-full border border-gold/30 bg-gold/5 px-3.5 py-2 text-xs font-bold text-gold transition-colors hover:bg-gold/15 active:scale-95"
+              >
+                {q.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
           <div className="flex-1 space-y-1.5">
             <Label htmlFor="surah-select" className="text-xs text-muted-foreground">سوره</Label>
@@ -1193,6 +1296,21 @@ function StudioSettingsCard() {
             {/* جلسه */}
             <div className="space-y-3">
               <SettingsSectionTitle>جلسه</SettingsSectionTitle>
+              <SettingRow label="تکرار خودکار بازه" hint="وقتی بازه تمام شد، خودکار دور تازه شروع می‌شود — تثبیت حفظ">
+                <Select
+                  value={String(cfg.repeatRounds)}
+                  onValueChange={(v) => update("repeatRounds", parseInt(v, 10) || 0)}
+                >
+                  <SelectTrigger className="w-32 rounded-lg" aria-label="تکرار خودکار بازه">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(REPEAT_ROUNDS_LABELS).map((k) => (
+                      <SelectItem key={k} value={k}>{REPEAT_ROUNDS_LABELS[k]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingRow>
               <SettingRow label="شمارش معکوس ۳-۲-۱" hint="چند ثانیه فرصت آماده‌شدن قبل از شروع">
                 <Switch checked={cfg.countdown} onCheckedChange={(v) => update("countdown", v)} aria-label="شمارش معکوس" />
               </SettingRow>

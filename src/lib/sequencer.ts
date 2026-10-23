@@ -21,7 +21,43 @@ import {
   STRICTNESS_PRESETS,
   wordSimilarity,
   tokenize,
+  normalizeArabic,
 } from "./alignment";
+
+/* ------------------------------------------------------------------ */
+/* باسمهٔ آغازین — شنیده می‌شود اما جزو آیات نیست (به‌جز سورهٔ فاتحه)      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * اگر قطعهٔ شنیده‌شده با «بسم الله الرحمن الرحيم» شروع شود، آن را برمی‌دارد
+ * تا به‌عنوان «کلمهٔ اضافه» خطا شمرده نشود. (فاتحه را حذف نمی‌کنیم — آنجا
+ * باسمه خودِ آیهٔ ۱ است؛ تصمیم را caller می‌گیرد.)
+ */
+export function stripOpeningBasmala(text: string): string {
+  const raw = text.trim().split(/\s+/).filter(Boolean);
+  if (raw.length === 0) return text;
+  const normed = raw.map((w) => normalizeArabic(w));
+  // الگوی استاندارد ۴ کلمه‌ای: بسم الله الرحمن الرحيم
+  if (
+    normed.length >= 4 &&
+    normed[0] === "بسم" &&
+    normed[1] === "الله" &&
+    (normed[2] === "الرحمن" || normed[2] === "الرحمان") &&
+    normed[3] === "الرحيم"
+  ) {
+    return raw.slice(4).join(" ");
+  }
+  // ASR گاهی «بسم‌الله» را سرهم می‌شنود
+  if (
+    normed.length >= 3 &&
+    normed[0].replace(/\s/g, "") === "بسمالله" &&
+    (normed[1] === "الرحمن" || normed[1] === "الرحمان") &&
+    normed[2] === "الرحيم"
+  ) {
+    return raw.slice(3).join(" ");
+  }
+  return text;
+}
 
 /** حداکثر فاصلهٔ جستجوی جاافتادگی (کلمات) */
 const LOOKAHEAD_MAX = 6;
