@@ -1,22 +1,53 @@
 import { PrismaClient } from '@prisma/client'
+import { PrismaLibSQL } from '@prisma/adapter-libsql'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-/** آدرس دیتابیس — روی ورکل (FS فقط-خواندنی) به /tmp می‌رود */
-function resolveDatabaseUrl(): string | undefined {
+/**
+ * پیکربندی Turso (دیتابیس ابری پایدار) — فقط وقتی هر دو env ست شده باشند.
+ * اگر توکن نبود، بی‌سروصدا به SQLite محلی برمی‌گردیم تا توسعه/استارت سرد نشکند.
+ */
+function tursoConfig(): { url: string; authToken: string } | null {
+  const url = process.env.TURSO_DATABASE_URL?.trim()
+  const authToken = process.env.TURSO_AUTH_TOKEN?.trim()
+  // «file:» برای تست محلی مسیر درایور؛ «libsql://» آدرس واقعی Turso است
+  if (url && authToken && (url.startsWith("libsql://") || url.startsWith("file:"))) {
+    return { url, authToken };
+  }
+  return null;
+}
+
+/** آدرس SQLite محلی — روی ورکل (FS فقط-خواندنی) به /tmp می‌رود */
+function localDatabaseUrl(): string | undefined {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
   if (process.env.VERCEL) return "file:/tmp/hafez.db";
   return undefined;
 }
 
-export const db =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: ['query'],
-    ...(resolveDatabaseUrl() ? { datasourceUrl: resolveDatabaseUrl() } : {}),
-  })
+function createDb(): PrismaClient {
+  const turso = tursoConfig();
+  if (turso) {
+    // دیتابیس ابری Turso — پایدار بین cold-startهای ورکل
+    // نکته: تایپ‌های باندل‌شدهٔ runtime با driver-adapter-utils ظاهراً ناسازگارند
+    // ولی نسخه‌های runtime جفت هماهنگ‌اند (هر دو 6.11.1)؛ فقط تایپ کست لازم است.
+    type PrismaOptions = NonNullable<ConstructorParameters<typeof PrismaClient>[0]>;
+    const adapter = new PrismaLibSQL(turso) as unknown as NonNullable<PrismaOptions["adapter"]>;
+    return new PrismaClient({
+      adapter,
+      log: process.env.NODE_ENV === 'production' ? ['error'] : ['query'],
+    });
+  }
+  // فایل SQLite محلی (توسعه یا ورکل بدون Turso)
+  const dsUrl = localDatabaseUrl();
+  return new PrismaClient({
+    log: process.env.NODE_ENV === 'production' ? ['error'] : ['query'],
+    ...(dsUrl ? { datasourceUrl: dsUrl } : {}),
+  });
+}
+
+export const db = globalForPrisma.prisma ?? createDb()
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
 
@@ -25,8 +56,9 @@ const globalForSchema = globalThis as unknown as {
 }
 
 /**
- * ساخت جداول در صورت نبود — روی ورکل فایل /tmp در هر شروع سرد خالی است،
- * پس اسکیمای لازم را در اولین درخواست می‌سازیم (بدون آسیب به دیتای محلی).
+ * ساخت جداول در صورت نبود — با Turso یا SQLite محلی کار می‌کند.
+ * روی ورکل فایل /tmp در هر شروع سرد خالی است، پس اسکیمای لازم
+ * را در اولین درخواست می‌سازیم (بدون آسیب به دیتای موجود).
  */
 export function ensureSchema(): Promise<void> {
   if (globalForSchema.__hafezSchemaReady) return globalForSchema.__hafezSchemaReady;
