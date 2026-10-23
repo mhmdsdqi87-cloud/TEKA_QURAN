@@ -58,10 +58,20 @@ export interface SpeechEngineOptions {
   onError: (message: string, fatal: boolean) => void;
 }
 
+/** iOS Safari پیوسته را خراب پشتیبانی می‌کند؛ حالت هر-نتیجه-بازراه‌اندازی لازم است */
+function isIosLike(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const ios = /iPad|iPhone|iPod/.test(ua);
+  const ipadOs = /Macintosh/.test(ua) && (navigator.maxTouchPoints ?? 0) > 1;
+  return ios || ipadOs;
+}
+
 export class SpeechEngine {
   private rec: SpeechRecognitionLike | null = null;
   private manualStop = false;
   private restarting = false;
+  private pendingFinal = false;
   private opts: SpeechEngineOptions;
 
   running = false;
@@ -85,9 +95,11 @@ export class SpeechEngine {
       this.rec = new Ctor();
       const rec = this.rec;
       rec.lang = this.opts.lang ?? "ar-SA";
-      rec.continuous = true;
+      // iOS: پیوسته مشکل دارد → تک‌نتیجه‌ای + بازراه‌اندازی خودکار؛ کروم/اج: پیوستهٔ کامل
+      const ios = isIosLike();
+      rec.continuous = !ios;
       rec.interimResults = true;
-      rec.maxAlternatives = 3;
+      rec.maxAlternatives = 5;
 
       rec.onresult = (e: SpeechRecognitionEventLike) => {
         let interim = "";
@@ -104,6 +116,7 @@ export class SpeechEngine {
                 const a = result[k]?.transcript?.trim();
                 if (a && !alts.includes(a)) alts.push(a);
               }
+              this.pendingFinal = ios; // iOS: بعد از هر نتیجهٔ نهایی خودش قطع می‌کند
               this.opts.onFinal(t, alts);
             }
           } else {
@@ -136,13 +149,15 @@ export class SpeechEngine {
           this.running = false;
           return;
         }
-        // کروم بعد از سکوت قطع می‌کند؛ خودکار راه‌اندازی مجدد می‌کنیم
+        // کروم بعد از سکوت قطع می‌کند؛ iOS بعد از هر نتیجهٔ نهایی؛ خودکار راه‌اندازی مجدد می‌کنیم
+        const delay = this.pendingFinal ? 120 : 250;
+        this.pendingFinal = false;
         if (!this.restarting) {
           this.restarting = true;
           setTimeout(() => {
             this.restarting = false;
             if (!this.manualStop) this.createAndStart();
-          }, 250);
+          }, delay);
         }
       };
 

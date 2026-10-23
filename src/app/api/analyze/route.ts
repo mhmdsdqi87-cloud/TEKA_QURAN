@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import ZAI from "z-ai-web-dev-sdk";
+import { chatComplete } from "@/lib/llm";
 import { getAuthUser } from "@/lib/auth";
 import { getTeacherContext, profileBlock } from "@/lib/teacher";
 
@@ -71,7 +71,6 @@ export async function POST(req: Request) {
   }
 
   try {
-    const zai = await ZAI.create();
     const userMsg = `سوره: ${body.surahName ?? "-"}
 دقت الگوریتمی: ${accuracy ?? "نامشخص"}%
 
@@ -87,15 +86,14 @@ ${mistakes.length ? JSON.stringify(mistakes) : "(خطای ساختاری ثبت 
 توجه: متن قرآن با رسم‌الخط عثمانی و متن شنیده‌شده خروجی ASR است؛ کلمات مشابه با اختلاف اعراب یا الف/ی را خطا حساب نکن. خطاهای واقعی (کلمهٔ متفاوت، جاافتادگی، اضافه‌گویی) را در mistakes برگردان. اگر ASR متن را خراب transfer کرده ولی الگوی کلی درست است، سخت‌گیر نباش.
 فقط JSON برگردان.`;
 
-    const completion = await zai.chat.completions.create({
-      messages: [
+    const raw = (await chatComplete(
+      [
         { role: "system", content: SYSTEM_PROMPT + profile },
         { role: "user", content: userMsg },
       ],
-      thinking: { type: "enabled" },
-    });
+      { json: true, thinking: true, timeoutMs: 90_000 }
+    )) ?? "";
 
-    const raw = completion.choices[0]?.message?.content ?? "";
     const parsed = safeParseJson(raw);
     if (!parsed) {
       return NextResponse.json({

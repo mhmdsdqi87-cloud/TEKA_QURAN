@@ -1,6 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { BookOpenText, ChartNoAxesColumn, LogIn, LogOut, Mic, Moon, Sparkles, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,8 +41,15 @@ export default function SiteHeader() {
     >
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
         <a href="#top" className="flex items-center gap-2.5" aria-label="حافظ — صفحهٔ اصلی">
-          <span className="relative flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-[oklch(0.8_0.13_85)] to-[oklch(0.6_0.12_165)] shadow-lg">
-            <BookOpenText className="size-5 text-[oklch(0.18_0.03_165)]" aria-hidden="true" />
+          <span className="relative flex size-10 items-center justify-center overflow-hidden rounded-xl shadow-lg ring-1 ring-gold/40">
+            <Image
+              src="/logo.png"
+              alt="لوگوی حافظ — قرآن طلایی روی زمینهٔ زمردی"
+              width={40}
+              height={40}
+              className="size-10 object-cover"
+              priority
+            />
           </span>
           <span className="flex flex-col leading-none">
             <span className="text-lg font-black tracking-tight text-foreground">حـافـظ</span>

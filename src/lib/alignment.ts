@@ -251,12 +251,14 @@ function dpAlign(
 /**
  * اعمال یک قطعهٔ متن شنیده‌شده (خروجی ASR) روی track.
  * pos: اندیس فعلی. track آینهٔ زنده تغییر وضعیت کلمات است.
+ * fullWindow: بازهٔ جستجو تا انتهای track گسترده می‌شود (برای بازبینی سراسری پایانی)
  */
 export function alignSegment(
   track: TrackWord[],
   pos: number,
   heardText: string,
-  preset: AlignPreset = STRICTNESS_PRESETS.normal
+  preset: AlignPreset = STRICTNESS_PRESETS.normal,
+  fullWindow = false
 ): AlignmentResult {
   const empty: AlignmentResult = {
     newPos: pos,
@@ -277,7 +279,9 @@ export function alignSegment(
     .filter(Boolean); // متن اصلی بدون اعراب — برای نمایش «شنیده شد»
   if (segNorm.length === 0) return empty;
 
-  const forwardWindowLen = Math.min(track.length - pos, segNorm.length + 14);
+  const forwardWindowLen = fullWindow
+    ? track.length - pos
+    : Math.min(track.length - pos, segNorm.length + 14);
   if (forwardWindowLen <= 0) return { ...empty, inserted: segRaw };
 
   const fwd = dpAlign(segNorm, segNorm, track.slice(pos, pos + forwardWindowLen), pos, preset);
@@ -386,6 +390,37 @@ export function buildTrack(
   });
   void startAyahNumber;
   return track;
+}
+
+/**
+ * بازبینی نهایی کل جلسه — هم‌ترازی سراسری «همهٔ شنیده‌ها» با «کل بازه»
+ * این تابع در پایان جلسه اجرا می‌شود و خطاهای انباشتهٔ هم‌ترازی لحظه‌ای
+ * (مثل کلمه‌ای که جا افتاده شمرده شد ولی در ادامه گفته شد) را اصلاح می‌کند.
+ * بازگشت: نسخهٔ اصلاح‌شدهٔ track (بدون تغییر track اصلی)
+ */
+export function fullResweep(
+  track: TrackWord[],
+  heardText: string,
+  preset: AlignPreset = STRICTNESS_PRESETS.normal
+): TrackWord[] {
+  const heard = heardText.trim();
+  if (!heard || track.length === 0) return track;
+
+  const segNorm = tokenize(heard);
+  if (segNorm.length === 0) return track;
+
+  // سقف ایمنی: جلسه‌های خیلی بلند را هم‌تراز نکن (هزینهٔ DP)
+  const cells = segNorm.length * track.length;
+  if (cells > 2_500_000) return track;
+
+  const fresh = track.map((w) => ({ ...w, status: "pending" as WordStatus }));
+  const result = alignSegment(fresh, 0, heard, preset, true);
+
+  // اگر هم‌ترازی سراسری به هیچ کلمه‌ای نرسید (مثلاً ASR کاملاً خراب بود)،
+  // وضعیت لحظه‌ای معتبرتر است — track اصلی را برگردان
+  const stats = computeAccuracy(fresh);
+  if (stats.total === 0) return track;
+  return fresh;
 }
 
 /** محاسبهٔ آمار دقت از وضعیت فعلی track */
