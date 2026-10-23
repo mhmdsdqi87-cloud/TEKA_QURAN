@@ -110,3 +110,19 @@ Work Log:
 
 Stage Summary:
 - سیستم حساب کاربری کامل و قفل «پیام تا لاگین» روی چت/تلاوت/ذخیره اعمال و راستی‌آزمایی شد؛ آمادهٔ پوش GitHub و دیپلوی Vercel
+
+---
+Task ID: 13 (iteration 4 — deploy)
+Agent: main (Z.ai Code)
+Task: گیت + ورکل
+
+Work Log:
+- git init تازه (تاریخچهٔ قبلی حذف شد طبق دستور کاربر)، user.name=mohammad / email=noreply، ۱۳۶ فایل استیج شد (بدون .env و db/*.db و لاگ‌ها — چک حساسیت ✓)
+- commit «first commit» با نویسندهٔ mohammad ✓ → push -u origin main با credential helper موقتی (توکن در config ذخیره نشد) → https://github.com/mhmdsdqi87-cloud/TEKA_QURAN ✓
+- vercel link (project: teka-quran) + env DATABASE_URL=file:/tmp/hafez.db (Production) → vercel --prod → https://teka-quran.vercel.app (Ready in 1m) ✓
+- راستی‌آزمایی production: / 200، /api/quran کامل، register موفق، چت مهمان 401، stats graceful، اسپلش ۱۳ث اول صفحه، استودیو/چت/هدر سالم، صفر خطای کنسول
+
+Stage Summary:
+- سایت لایو: https://teka-quran.vercel.app | ریپو: https://github.com/mhmdsdqi87-cloud/TEKA_QURAN
+- محدودیت: SQLite روی ورکل موقتی است (با cold start ریست می‌شود) — برای دائمی شدن: Turso/Neon
+- توکن‌ها فقط در همین نشست استفاده شدند و در هیچ فایلی ذخیره نشدند؛ توصیه: چرخاندن (revoke) هر دو توکن پس از این مرحله
