@@ -66,7 +66,7 @@ export default function AuthDialog() {
         }
       }}
     >
-      <DialogContent className="glass-card gold-border-glow max-w-[92vw] rounded-3xl border-border sm:max-w-md">
+      <DialogContent className="glass-card gold-border-glow max-h-[92svh] max-w-[92vw] overflow-y-auto rounded-3xl border-border sm:max-w-md">
         <DialogHeader className="items-center text-center">
           <div className="mb-1 flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[oklch(0.8_0.13_85)] to-[oklch(0.6_0.12_165)] shadow-lg">
             <ShieldCheck className="size-7 text-[oklch(0.18_0.03_165)]" aria-hidden="true" />
