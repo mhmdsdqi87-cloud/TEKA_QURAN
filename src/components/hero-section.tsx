@@ -2,7 +2,8 @@
 
 import { useState, type CSSProperties } from "react";
 import { motion, type Variants } from "framer-motion";
-import { ChevronDown, Mic } from "lucide-react";
+import { ChevronDown, LogIn, Mic } from "lucide-react";
+import { useAuth } from "@/lib/auth-store";
 
 type HeroSectionProps = {
   /** با کلیک روی CTA صدا زده می‌شود (۹۵۰ms پس از شروع انیمیشن پرتاب) */
@@ -33,6 +34,7 @@ const ctaStyle: CSSProperties = {
 
 export default function HeroSection({ onStart }: HeroSectionProps) {
   const [launching, setLaunching] = useState(false);
+  const { user, ready, openDialog } = useAuth();
 
   const handleStart = () => {
     if (launching) return;
@@ -121,13 +123,26 @@ export default function HeroSection({ onStart }: HeroSectionProps) {
             {launching ? "…به سمت استودیو" : "شروع جلسهٔ تلاوت"}
           </button>
 
-          <a
-            href="#features"
-            className="inline-flex items-center gap-1.5 text-sm text-[oklch(0.93_0.015_100/0.7)] transition-colors duration-300 hover:text-[oklch(0.9_0.08_95)] sm:text-base"
-          >
-            مشاهدهٔ امکانات
-            <ChevronDown aria-hidden="true" className="size-4 animate-bounce sm:size-5" />
-          </a>
+          <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-4">
+            <a
+              href="#features"
+              className="inline-flex items-center gap-1.5 text-sm text-[oklch(0.93_0.015_100/0.7)] transition-colors duration-300 hover:text-[oklch(0.9_0.08_95)] sm:text-base"
+            >
+              مشاهدهٔ امکانات
+              <ChevronDown aria-hidden="true" className="size-4 animate-bounce sm:size-5" />
+            </a>
+            {/* دعوت به ورود — برای مهمان‌ها */}
+            {ready && !user && (
+              <button
+                type="button"
+                onClick={openDialog}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[oklch(0.8_0.13_85/0.45)] bg-[oklch(0.12_0.02_170/0.5)] px-4 py-2 text-sm font-bold text-[oklch(0.9_0.08_95)] backdrop-blur-sm transition-all duration-300 hover:bg-[oklch(0.8_0.13_85/0.15)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[oklch(0.8_0.13_85)] sm:text-base"
+              >
+                <LogIn aria-hidden="true" className="size-4" />
+                ورود / ثبت‌نام — ساخت حساب و ذخیرهٔ آمار
+              </button>
+            )}
+          </div>
         </motion.div>
       </motion.div>
     </section>

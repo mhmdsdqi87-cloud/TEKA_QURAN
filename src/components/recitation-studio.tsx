@@ -16,6 +16,7 @@ import {
   RotateCcw,
   SlidersHorizontal,
   Square,
+  Target,
   Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -55,10 +56,19 @@ import type { MistakeEvent } from "@/lib/alignment";
 interface AnalyzeResult {
   summary: string;
   scoreNote: string;
+  grade?: string;
   tips: string[];
+  plan?: string[];
   mistakes: { ayahNumber: number; kind: string; expected: string; heard: string; note: string }[];
   fallback?: boolean;
 }
+
+const GRADE_STYLES: Record<string, string> = {
+  "درخشان": "border-emerald-500/40 bg-emerald-500/10 text-emerald-600",
+  "خوب": "border-gold/40 bg-gold/10 text-gold",
+  "رو به پیشرفت": "border-sky-500/40 bg-sky-500/10 text-sky-600",
+  "نیاز به تمرین": "border-red-500/40 bg-red-500/10 text-red-500",
+};
 
 export default function RecitationStudio() {
   const { toast } = useToast();
@@ -843,10 +853,19 @@ export default function RecitationStudio() {
               <div className="space-y-3">
                 {analysis && (
                   <>
-                    <h3 className="flex items-center gap-2 text-lg font-black">
-                      <Bot className="size-5 text-emerald-500" aria-hidden="true" />
-                      نظر معلم
-                    </h3>
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="flex items-center gap-2 text-lg font-black">
+                        <Bot className="size-5 text-emerald-500" aria-hidden="true" />
+                        نظر معلم
+                      </h3>
+                      {analysis.grade && (
+                        <span
+                          className={`rounded-full border px-3 py-1 text-[11px] font-black ${GRADE_STYLES[analysis.grade] ?? "border-border bg-muted text-muted-foreground"}`}
+                        >
+                          {analysis.grade}
+                        </span>
+                      )}
+                    </div>
                     {analysis.summary && <p className="text-sm leading-7 text-foreground/90">{analysis.summary}</p>}
                     {analysis.scoreNote && (
                       <p className="text-xs leading-6 text-muted-foreground">{analysis.scoreNote}</p>
@@ -860,6 +879,19 @@ export default function RecitationStudio() {
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {analysis.plan && analysis.plan.length > 0 && (
+                      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                        <p className="mb-1.5 flex items-center gap-1.5 text-xs font-black text-emerald-600">
+                          <Target className="size-3.5" aria-hidden="true" />
+                          برنامهٔ تمرین معلم
+                        </p>
+                        <ol className="flex list-inside list-decimal flex-col gap-1 text-xs leading-6 text-foreground/85">
+                          {analysis.plan.map((step, i) => (
+                            <li key={i}>{step}</li>
+                          ))}
+                        </ol>
+                      </div>
                     )}
                     {analysis.mistakes?.length > 0 && (
                       <div className="nice-scroll max-h-44 space-y-1.5 overflow-y-auto rounded-xl border border-red-500/20 bg-red-500/5 p-3">
