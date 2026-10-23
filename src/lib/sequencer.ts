@@ -1,17 +1,19 @@
 /**
- * موتور پیگیری ترتیبی حرف‌به‌حرف — قلب همگام‌سازی زندهٔ تلاوت
+ * موتور پیگیری ترتیبی حرف‌به‌حرف — نسخهٔ ۲ «صفر خطای کاذب»
  *
- * فلسفه (رفع ریشه‌ای «هایلایت می‌پرد جای دیگه»):
- * برخلاف هم‌ترازی DP آزاد که هر قطعه را می‌تواند به «هرجای» پنجره مچ کند،
- * این موتور یک نشانگر (cursor) دارد که فقط رو به جلو و فقط کلمه‌به‌کلمه حرکت می‌کند:
+ * فلسفه (رفع ریشه‌ای «پشت‌سرهم بوق و خطا روی تلاوت درست»):
+ * هرگز نباید تلاوتِ درستِ کاربر خطا شمرده شود — حتی اگر ASR کلمه را خراب بشنود.
+ * پس:
  *
- * ۱) کلمهٔ شنیده‌شده ابتدا با «همان کلمهٔ بعدی مورد انتظار» مقایسه می‌شود.
- * ۲) اگر نخواند، حداکثر ۴ کلمهٔ جلوتر نگاه می‌کند (جاافتادگی کوچک) — نه بیشتر.
- * ۳) اگر شبیه کلمهٔ مورد انتظار ولی ناقص بود → جانشینی واقعی (کلمهٔ غلط) — نشانگر می‌رود جلو.
- * ۴) اگر هیچ ربطی نداشت (نویز ASR) → نادیده گرفته می‌شود و نشانگر سرِ جایش می‌ماند.
+ * ۱) تطبیق مستقیم → سبز، جلو.
+ * ۲) تطبیق نرم (گاربل ASR) → سبز، جلو — هرگز خطا نیست.
+ * ۳) جاافتادگی ۱-۲ کلمه‌ای → کهربایی «ملایم» (بی‌بوق) — عمدتاً حذف ASR است.
+ * ۴) جاافتادگی ۳-۶ کلمه‌ای یا پرش آیه‌ای (با تأیید دومین کلمه) → کهربایی بلند + بوق.
+ * ۵) کلمهٔ ناشناس → «پارک» می‌شود؛ فقط اگر کلمهٔ بعدی نشانگر را از رویش رد کند
+ *    (یعنی قطعاً کلمهٔ دیگری خوانده شده) قرمز می‌شود؛ وگرنه ساکت رها می‌شود.
+ * ۶) نویز خالص ASR → هیچ: نه نشانگر، نه خطا، نه بوق.
  *
- * نتیجه: هایلایت دقیقاً هم‌قدم با صدای کاربر پیش می‌رود و هرگز به عقب یا
- * چندکلمه‌ای جلوتر نمی‌پرد.
+ * نتیجه: بوق فقط وقتی به صدا درمی‌آید که «قطعاً» اشتباه واقعی رخ داده است.
  */
 
 import {
@@ -20,8 +22,9 @@ import {
   type AlignPreset,
   STRICTNESS_PRESETS,
   wordSimilarity,
-  tokenize,
   normalizeArabic,
+  normToken,
+  softMinOf,
 } from "./alignment";
 
 /* ------------------------------------------------------------------ */
@@ -59,14 +62,25 @@ export function stripOpeningBasmala(text: string): string {
   return text;
 }
 
-/** حداکثر فاصلهٔ جستجوی جاافتادگی (کلمات) */
-const LOOKAHEAD_MAX = 6;
-/** آستانهٔ تطبیق برای پرش‌های دور (≥۳ کلمه جلوتر) — فقط تطبیق قوی */
+/** آستانهٔ تطبیق برای پرش‌های دور (۳-۶ کلمه جلوتر) — فقط تطبیق قوی */
 const FAR_SKIP_BAR = 0.85;
 /** حداکثر پرش دور در هر قطعه — ضد زنجیره‌شدن پرش‌های کاذب */
 const FAR_SKIP_LIMIT = 2;
-/** کف شباهت برای «جانشینی واقعی» (کلمهٔ غلط خوانده شده) — زیر آستانهٔ پذیرش */
-const WRONG_BAND = 0.45;
+/** آستانهٔ تأیید پرش آیه‌ای (کلمهٔ دوم مؤید) */
+const VERSE_JUMP_BAR = 0.8;
+/** سقف جستجوی پرش آیه‌ای (کلمه) */
+const VERSE_JUMP_RANGE = 60;
+/** حداقل شباهت کلمهٔ ناشناس برای «کاندید خطا» شدن — زیرش یعنی آشغال ASR خالص */
+const SUSPECT_MIN = 0.22;
+/** حداکثر کاندیدهای خطا در هر قطعه */
+const SUSPECT_CAP = 3;
+/** آستانهٔ ترکیب دو توکن ↔ یک کلمه (و بالعکس) */
+const COMPOUND_BAR = 0.82;
+
+/** آستانهٔ «کلمهٔ واقعی از جای دیگر سوره» — برای تأیید جانشینی واقعی */
+const REAL_WORD_BAR = 0.85;
+/** عمق جستجوی عقب برای کلمهٔ واقعی (تداخل آیات) */
+const REAL_WORD_BACK = 40;
 
 export interface SeqMark {
   idx: number; // اندیس مطلق در track
@@ -80,7 +94,10 @@ export interface SeqResult {
   exact: number;
   fuzzy: number;
   wrong: { idx: number; expected: string; heard: string }[];
+  /** همهٔ کلمات جاافتاده */
   missed: number[];
+  /** زیرمجموعهٔ بلند (پرش ۳+ کلمه/آیه‌ای) — مستحق بوق و توست */
+  missedLoud: number[];
   /** کلمات شنیده‌شده که به هیچ کلمه‌ای نچسبیدند (نویز ASR یا کلمات خارج از بازه) */
   unknown: string[];
   /** میانگین شباهت تطبیق‌های پذیرفته‌شده 0..1 */
@@ -97,6 +114,7 @@ function emptySeq(pos: number): SeqResult {
     fuzzy: 0,
     wrong: [],
     missed: [],
+    missedLoud: [],
     unknown: [],
     quality: 0,
     matchedCount: 0,
@@ -113,14 +131,22 @@ export function seqAlign(
   window: TrackWord[],
   startIdx: number,
   heardText: string,
-  preset: AlignPreset = STRICTNESS_PRESETS.normal
+  preset: AlignPreset = STRICTNESS_PRESETS.normal,
+  /** track کامل — فقط برای جستجوی عقب‌رو در تأیید جانشینی واقعی (اختیاری) */
+  fullTrack?: TrackWord[]
 ): SeqResult {
-  const words = tokenize(heardText);
-  const rawWords = heardText
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length === 0 || window.length === 0) return emptySeq(startIdx);
+  const softMin = softMinOf(preset);
+
+  // ——— جفت‌سازی امن raw/norm ———
+  // توکن‌هایی که نرمال‌سازی خالی‌شان می‌کند (لاتین/عدد/علامت) حذف می‌شوند
+  // تا raw[i] همیشه با norm[i] همان کلمه جفت شود (رفع باگ جابجایی ایندکس).
+  const rawAll = heardText.trim().split(/\s+/).filter(Boolean);
+  const pairs: { raw: string; norm: string }[] = [];
+  for (const raw of rawAll) {
+    const norm = normToken(raw);
+    if (norm.length > 0) pairs.push({ raw, norm });
+  }
+  if (pairs.length === 0 || window.length === 0) return emptySeq(startIdx);
 
   let cursor = 0; // محلی داخل window
   let exact = 0,
@@ -131,88 +157,186 @@ export function seqAlign(
   const marks: SeqMark[] = [];
   const wrong: SeqResult["wrong"] = [];
   const missed: number[] = [];
+  const missedLoud: number[] = [];
   const unknown: string[] = [];
+  /** کلمات ناشناس پارک‌شده — فقط اگر کلمهٔ واقعی سوره در جای دیگر باشند قرمز می‌شوند */
+  const suspects: { local: number; heard: string; norm: string }[] = [];
 
   const setStatus = (local: number, status: WordStatus) => {
     window[local].status = status;
     marks.push({ idx: startIdx + local, status });
   };
 
-  for (let i = 0; i < rawWords.length; i++) {
-    const raw = rawWords[i];
-    const norm = words[i];
-    if (!norm) continue;
+  /**
+   * تأیید کاندیدهای خطا در بازهٔ [from, to):
+   * کلمهٔ ناشناس پارک‌شده فقط وقتی «جانشینی واقعی» است که خودِ آن کلمه در
+   * جای دیگری از سوره مچِ قوی شود (تداخل آیه — مثل گفتن «العالمین» به‌جای «الرحیم»)
+   * — گاربلِ ASR هیچ‌جا مچ نمی‌شود و ساکت رها می‌شود (صفر خطای کاذب).
+   */
+  const resolveSuspects = (from: number, to: number) => {
+    for (let s = suspects.length - 1; s >= 0; s--) {
+      const sus = suspects[s];
+      if (sus.local >= from && sus.local < to) {
+        const absLocal = startIdx + sus.local;
+        let realWord = false;
+        const pool = fullTrack ?? window;
+        for (let j = 0; j < pool.length; j++) {
+          // مجاورت را جستجوی پرش خودش آزموده — فقط عقب‌تر و دورتر
+          if (j >= absLocal && j <= absLocal + 6) continue;
+          if (j < absLocal - REAL_WORD_BACK) continue;
+          if (wordSimilarity(sus.norm, pool[j].norm) >= REAL_WORD_BAR) {
+            realWord = true;
+            break;
+          }
+        }
+        if (realWord) {
+          const w = window[sus.local];
+          if (w.status === "pending" || w.status === "active") {
+            setStatus(sus.local, "wrong");
+            wrong.push({
+              idx: absLocal,
+              expected: w.text,
+              heard: sus.heard,
+            });
+          }
+        }
+        suspects.splice(s, 1);
+      }
+    }
+  };
+
+  /** علامت‌گذاری جاافتادگی یک بلوک [from, to) */
+  const markBlockMissed = (from: number, to: number, loud: boolean) => {
+    for (let k = from; k < to; k++) {
+      const st = window[k].status;
+      if (st === "pending" || st === "active") {
+        setStatus(k, "missed");
+        missed.push(startIdx + k);
+        if (loud) missedLoud.push(startIdx + k);
+      }
+    }
+  };
+
+  const acceptMatch = (local: number, sim: number) => {
+    if (sim >= preset.goodMatch) exact++;
+    else fuzzy++;
+    simSum += sim;
+    simCount++;
+    setStatus(local, "correct");
+  };
+
+  for (let i = 0; i < pairs.length; i++) {
+    const { raw, norm } = pairs[i];
     if (cursor >= window.length) {
       unknown.push(raw); // بازه تمام شد — بقیه اضافه است
       continue;
     }
 
-    // ۱) همان کلمهٔ بعدی مورد انتظار
-    const simCursor = wordSimilarity(norm, window[cursor].norm);
-    if (simCursor >= preset.fuzzyAccept) {
-      if (simCursor >= preset.goodMatch) {
-        exact++;
-      } else {
-        fuzzy++;
+    // ۰) ترکیب‌ها — ASR گاهی «و» را جدا یا دو کلمه را سرهم می‌شنود
+    if (i + 1 < pairs.length) {
+      const join = norm + pairs[i + 1].norm;
+      if (wordSimilarity(join, window[cursor].norm) >= COMPOUND_BAR) {
+        acceptMatch(cursor, 1);
+        cursor += 1;
+        continue; // هر دو توکن مصرف شد
       }
-      simSum += simCursor;
-      simCount++;
-      setStatus(cursor, "correct");
-      cursor++;
+    }
+    if (cursor + 1 < window.length) {
+      const joinE = window[cursor].norm + window[cursor + 1].norm;
+      if (wordSimilarity(norm, joinE) >= COMPOUND_BAR) {
+        acceptMatch(cursor, 1);
+        setStatus(cursor + 1, "correct");
+        cursor += 2;
+        continue;
+      }
+    }
+
+    // ۱) تطبیق مستقیم با همان کلمهٔ بعدی مورد انتظار
+    const s0 = wordSimilarity(norm, window[cursor].norm);
+    if (s0 >= preset.fuzzyAccept) {
+      acceptMatch(cursor, s0);
+      cursor += 1;
       continue;
     }
 
-    // ۲) جاافتادگی: جستجوی پله‌ای رو به جلو
-    // نزدیک (۱-۲ کلمه): آستانهٔ عادی — دور (۳-۶ کلمه، مثلاً پرش یک آیهٔ کوتاه):
-    // فقط تطبیق قوی (۰.۸۵+) و حداکثر ۲ بار در قطعه — تا کلمات پرتکرار نشانگر را نربانند
+    // ۲) تطبیق نرم — گاربل ASR از کلمهٔ درست: جلو برو، هرگز خطا نشمار
+    if (s0 >= softMin) {
+      fuzzy++;
+      simSum += s0;
+      simCount++;
+      setStatus(cursor, "correct");
+      cursor += 1;
+      continue;
+    }
+
+    // ۳) جاافتادگی: جستجوی پله‌ای ۱..۶
+    //    نزدیک (۱-۲ کلمه): آستانهٔ عادی — دور (۳-۶ کلمه): فقط تطبیق قوی + سقف ۲ بار
     let skipJ = -1;
-    let skipFar = false;
-    const limit = Math.min(cursor + LOOKAHEAD_MAX, window.length - 1);
+    const limit = Math.min(cursor + 6, window.length - 1);
     for (let j = cursor + 1; j <= limit; j++) {
       const dist = j - cursor;
-      const bar = dist <= 2 ? preset.fuzzyAccept : FAR_SKIP_BAR;
       if (dist > 2 && farSkips >= FAR_SKIP_LIMIT) break;
+      const bar = dist <= 2 ? preset.fuzzyAccept : FAR_SKIP_BAR;
       if (wordSimilarity(norm, window[j].norm) >= bar) {
         skipJ = j;
-        skipFar = dist > 2;
         break; // نزدیک‌ترین — نه دورترین
       }
     }
     if (skipJ > 0) {
-      // کلمات بین راه جا افتاده‌اند (فقط اگر قبلاً ارزیابی نشده بودند)
-      for (let k = cursor; k < skipJ; k++) {
-        const st = window[k].status;
-        if (st === "pending" || st === "active") {
-          setStatus(k, "missed");
-          missed.push(startIdx + k);
-        }
-      }
-      simSum += 1;
+      const dist = skipJ - cursor;
+      // کلمات ناشناس پارک‌شدهٔ مسیر — اگر علامت نخورده‌اند جانشینی واقعی‌اند
+      resolveSuspects(cursor, skipJ);
+      markBlockMissed(cursor, skipJ, dist > 2);
+      if (dist > 2) farSkips++;
+      simSum += 0.95;
       simCount++;
       exact++;
-      if (skipFar) farSkips++;
       setStatus(skipJ, "correct");
       cursor = skipJ + 1;
       continue;
     }
 
-    // ۳) جانشینی واقعی: شبیه کلمهٔ مورد انتظار است ولی همان نیست (کلمهٔ غلط)
-    if (simCursor >= WRONG_BAND) {
-      setStatus(cursor, "wrong");
-      wrong.push({
-        idx: startIdx + cursor,
-        expected: window[cursor].text,
-        heard: raw,
-      });
-      simSum += simCursor;
-      simCount++;
-      cursor++;
-      continue;
+    // ۴) پرش آیه‌ای دور (۷..۶۰) — فقط با تأیید دومین کلمه:
+    //    این کلمه و کلمهٔ بعدی هر دو قوی به همان ناحیهٔ دور بچسبند
+    //    (یک کلمهٔ پرتکرار مثل «الله» تنها هرگز نشانگر را نمی‌رباید)
+    if (i + 1 < pairs.length && farSkips < FAR_SKIP_LIMIT && cursor + 7 < window.length) {
+      let jFar = -1;
+      const limit2 = Math.min(cursor + VERSE_JUMP_RANGE, window.length - 1);
+      for (let j = cursor + 7; j <= limit2; j++) {
+        if (
+          wordSimilarity(norm, window[j].norm) >= FAR_SKIP_BAR &&
+          wordSimilarity(pairs[i + 1].norm, window[j + 1]?.norm ?? "") >= VERSE_JUMP_BAR
+        ) {
+          jFar = j;
+          break;
+        }
+      }
+      if (jFar > 0) {
+        resolveSuspects(cursor, jFar);
+        markBlockMissed(cursor, jFar, true);
+        farSkips++;
+        simSum += 1;
+        simCount++;
+        exact++;
+        setStatus(jFar, "correct");
+        cursor = jFar + 1;
+        continue;
+      }
     }
 
-    // ۴) نویز ASR — نشانگر نمی‌جنبد
+    // ۵) ناشناس — نشانگر نمی‌جنبد؛ اگر معنادار بود کاندید خطا پارک می‌شود
     unknown.push(raw);
+    if (
+      norm.length >= 3 &&
+      suspects.length < SUSPECT_CAP &&
+      s0 >= SUSPECT_MIN
+    ) {
+      suspects.push({ local: cursor, heard: raw, norm });
+    }
   }
+
+  // پایان قطعه: کاندیدهای بی‌تأیید ساکت رها می‌شوند — نه قرمز، نه بوق.
+  // (قطعهٔ بعدی از همان نشانگر دوباره آن‌ها را می‌آزماید)
 
   const matchedCount = exact + fuzzy + wrong.length;
   return {
@@ -222,6 +346,7 @@ export function seqAlign(
     fuzzy,
     wrong,
     missed,
+    missedLoud,
     unknown,
     quality: simCount > 0 ? simSum / simCount : 0,
     matchedCount,
