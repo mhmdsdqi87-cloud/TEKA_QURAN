@@ -146,3 +146,26 @@ Work Log:
 Stage Summary:
 - دیتابیس اکنون پایدار است (حساب‌ها و آمار با cold-start ورکل پاک نمی‌شوند)؛ باگ ریشه‌ای دیالوگ/چت رفع شد؛ استاد چت و تحلیل شخصی‌سازی‌شده و قوی‌تر شد؛ lint/tsc پاک
 - امنیت: توکن پلتفرم تورسو + PAT گیت‌هاب + توکن ورکل در چت مطرح شده‌اند → به کاربر توصیهٔ چرخاندن هر سه توکن
+
+---
+Task ID: 15
+Agent: main (Z.ai Code)
+Task: درخواست سوم کاربر — لوگوی قرآنی (favicon + هدر)، رفع خرابی «استاد تحفیظ» روی سایت لایو، دقت بیشتر استودیو تلاوت
+
+Work Log:
+- مهاجرت واقعی Turso اجرا شد (scripts/turso-migrate.ts): اتصال برقرار، اسکیمای ابری آماده، داده‌های محلی روی ابر موجود
+- ریشه‌یابی «معلم خرابه/در دسترس نیست»: z-ai-web-dev-sdk از فایل /etc/.z-ai-config (فقط در سندباکس) پیکربندی می‌خواند؛ روی Vercel همیشه throw می‌کرد → خطای ۵۰۲ «استاد فعلاً در دسترس نیست»
+- ساخت src/lib/llm.ts — زنجیرهٔ تأمین LLM: (۱) z-ai SDK با thinking در سندباکس (۲) فالبک خودکار Pollinations (OpenAI-compatible، بدون کلید، تست‌شده از هر سرور). مسیرهای /api/chat و /api/analyze متصل شدند
+- تست لایو: چت استاد روی teka-quran.vercel.app جواب شخصی‌سازی‌شدهٔ فارسی با آیه و «گام عملی» داد (پروفایل از Turso)؛ ثبت‌نام/ورود با چند کانکشن سرد → حساب پایدار (رفع کامل «حساب‌ها پاک می‌شوند»)
+- دقت استودیو: maxAlternatives ۳→۵، حالت سازگار iOS Safari (continuous=false + بازراه‌اندازی بعد هر نتیجهٔ نهایی با تأخیر ۱۲۰ms)، تشخیص iPadOS
+- src/lib/alignment.ts: alignSegment پارامتر fullWindow گرفت + تابع fullResweep — هم‌ترازی سراسری «کل شنیده‌ها با کل بازه» در پایان جلسه؛ خطاهای انباشتهٔ هم‌ترازی لحظه‌ای اصلاح می‌شود (سقف ایمنی ۲.۵ میلیون سلول DP)
+- store.ts: finish() حالا resweep سراسری را اجرا و آمار/accuracy/pos را به‌روزرسانی می‌کند + پیام «بازبینی نهایی انجام شد»
+- لوگو با image-generation ساخته شد (کتاب طلایی نورانی + هلال روی زمردی، بدون متن): public/logo.png (هدر/چت/دیالوگ)، public/logo-circle.png، src/app/icon.png (favicon کنار آدرس مرورگر — link rel=icon تأیید شد)، src/app/apple-icon.png، public/logo-ornate.png (نسخهٔ شکیل‌تر برای استفاده‌های بعدی)
+- site-header.tsx، chat-widget.tsx و auth-dialog.tsx به لوگوی واقعی مجهز شدند (next/image + ring طلایی)
+- E2E با agent-browser: اسپلش → هدر با لوگو → ثبت‌نام/ورود (دسکتاپ + موبایل ۳۹۰px) → چت استاد با پاسخ واقعی → موتور تطبیق (تلاوت کامل=۱۰۰٪، جاافتادگی+کلمهٔ اشتباه=۸۰٪ با تشخیص درست، resweep پایانی) → فوتر چسبندهٔ TEKA
+- lint و tsc روی src/ بدون خطا؛ commit c49dabd با author «mohammad» → push به main → deploy تولیدی Vercel dpl_DuxFDUDyEFDErCXStwxJiDHd4Vnu → READY
+- متغیرهای محیطی TURSO_DATABASE_URL و TURSO_AUTH_TOKEN روی Vercel (production/preview/development) تنظیم شدند (via REST API)
+
+Stage Summary:
+- زنجیرهٔ LLM تضمین می‌کند استاد تحفیظ روی هر هاستی وصل بماند؛ برای کیفیت بهتر در آینده کافی است متغیر زایمثل OPENAI_API_KEY به llm.ts اضافه شود
+- حساب آزمایشی live_qa_test روی Turso باقی مانده (بی‌خطر)؛ توکن‌های به‌اشتراک‌گذاشته‌شده (GitHub/Vercel/Turso) باید توسط کاربر چرخانده شوند
