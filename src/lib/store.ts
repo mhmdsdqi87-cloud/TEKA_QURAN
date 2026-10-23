@@ -5,6 +5,7 @@ import {
   alignSegment,
   buildTrack,
   computeAccuracy,
+  fullResweep,
   STRICTNESS_PRESETS,
   type MistakeEvent,
   type TrackWord,
@@ -292,7 +293,40 @@ export const useStudio = create<StudioState>((set, get) => ({
       elapsedSec: s.startedAt ? Math.floor((Date.now() - s.startedAt) / 1000) : 0,
     })),
 
-  finish: () => set({ phase: "review" }),
+  finish: () =>
+    set((s) => {
+      // ——— بازبینی سراسری پایانی: هم‌ترازی همهٔ شنیده‌ها با کل بازه ———
+      // خطاهای انباشتهٔ هم‌ترازی لحظه‌ای را اصلاح می‌کند (دقت نهایی واقعی‌تر)
+      if (s.heardSegments.length > 0 && s.track.length > 0) {
+        const preset = STRICTNESS_PRESETS[useSettings.getState().strictness];
+        const heardAll = s.heardSegments.join(" ");
+        const swept = fullResweep(s.track, heardAll, preset);
+        if (swept !== s.track) {
+          const stats = computeAccuracy(swept);
+          let newPos = 0;
+          for (let i = 0; i < swept.length; i++) {
+            if (swept[i].status !== "pending") newPos = i + 1;
+          }
+          return {
+            track: swept,
+            pos: Math.max(newPos, s.pos),
+            accuracy: stats.accuracy,
+            wordsCorrect: stats.correct,
+            phase: "review" as const,
+            feedback: [
+              ...s.feedback,
+              {
+                id: `m${++msgCounter}`,
+                kind: "analysis" as const,
+                text: "بازبینی نهایی انجام شد؛ آمار با هم‌ترازی سراسری کل تلاوت محاسبه شد.",
+                at: Date.now(),
+              },
+            ],
+          };
+        }
+      }
+      return { phase: "review" as const };
+    }),
 
   reset: () => set(emptyState),
 

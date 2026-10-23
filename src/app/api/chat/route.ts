@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import LLM from "@teka/ai-core";
+import { chatComplete } from "@/lib/llm";
 import { getAuthUser } from "@/lib/auth";
 import { getTeacherContext, profileBlock } from "@/lib/teacher";
 
@@ -60,17 +60,15 @@ export async function POST(req: Request) {
     const displayName = (user.name || user.username).trim();
     const system = `${BASE_PROMPT}\n\n${profileBlock(displayName, ctx)}\n\nتاریخ امروز: ${new Date().toLocaleDateString("fa-IR")}`;
 
-    const zai = await LLM.create();
-    const completion = await llm.hat.completions.create({
-      messages: [
+    const reply = await chatComplete(
+      [
         { role: "system", content: system },
         ...history.map((m) => ({ role: m.role, content: m.content })),
       ],
-      thinking: { type: "enabled" },
-    });
-    const reply = (completion.choices[0]?.message?.content ?? "").trim();
+      { thinking: true, timeoutMs: 55_000 }
+    );
     if (!reply) {
-      return NextResponse.json({ error: "پاسخی دریافت نشد؛ دوباره تلاش کن" }, { status: 502 });
+      return NextResponse.json({ error: "استاد فعلاً در دسترس نیست؛ کمی بعد دوباره امتحان کن" }, { status: 502 });
     }
     return NextResponse.json({ reply: reply.slice(0, 5000) });
   } catch (err) {

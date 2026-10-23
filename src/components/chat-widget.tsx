@@ -6,7 +6,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bot, Loader2, LogIn, MessageCircle, SendHorizonal, X } from "lucide-react";
+import Image from "next/image";
+import { Loader2, LogIn, MessageCircle, SendHorizonal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth-store";
@@ -124,8 +125,14 @@ export default function ChatWidget() {
           >
             {/* هدر */}
             <header className="flex items-center gap-3 border-b border-border/60 bg-background/40 px-4 py-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[oklch(0.8_0.13_85)] to-[oklch(0.6_0.12_165)] shadow">
-                <Bot className="size-5 text-[oklch(0.18_0.03_165)]" aria-hidden="true" />
+              <span className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl shadow ring-1 ring-gold/40">
+                <Image
+                  src="/logo.png"
+                  alt="نشان استاد تحفیظ"
+                  width={40}
+                  height={40}
+                  className="size-10 object-cover"
+                />
               </span>
               <div className="min-w-0 flex-1 leading-tight">
                 <p className="text-sm font-black">استاد تحفیظ</p>
