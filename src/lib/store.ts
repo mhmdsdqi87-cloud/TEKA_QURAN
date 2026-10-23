@@ -2,7 +2,6 @@
 
 import { create } from "zustand";
 import {
-  alignSegment,
   buildTrack,
   computeAccuracy,
   fullResweep,
@@ -10,6 +9,7 @@ import {
   type MistakeEvent,
   type TrackWord,
 } from "@/lib/alignment";
+import { seqAlign, seqScore } from "@/lib/sequencer";
 import { useSettings } from "@/lib/settings";
 
 export interface AyahLite {
@@ -80,6 +80,12 @@ export interface StudioState {
 
 let msgCounter = 0;
 
+/**
+ * شمار کلمات پیاپیِ نچسبیده (نویز ASR) — اگر زیاد شد یعنی پیگیری گم شده
+ * و باید با هم‌ترازی سراسری دوباره همگام شود.
+ */
+let unknownStreak = 0;
+
 /** سقف پیام‌های بازخورد — جلوگیری از شلوغی/کندی رابط در جلسه‌های بلند */
 const FEEDBACK_CAP = 60;
 
@@ -114,6 +120,7 @@ export const useStudio = create<StudioState>((set, get) => ({
 
   setRange: (surah, from, to, ayahs) => {
     const track = buildTrack(ayahs, from);
+    unknownStreak = 0;
     set({
       surah,
       fromAyah: from,
@@ -151,7 +158,7 @@ export const useStudio = create<StudioState>((set, get) => ({
         {
           id: `m${++msgCounter}`,
           kind: "info",
-          text: "گوش می‌دهم… تلاوت را شروع کنید. هر خطا را همان لحظه نشان می‌دهم.",
+          text: "گوش می‌دهم… کلمه‌به‌کلمه دنبالت هستم. تلاوت را شروع کن؛ هر خطا را همان لحظه نشان می‌دهم.",
           at: Date.now(),
         },
       ],
@@ -172,7 +179,6 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ preview: null }); // نتیجهٔ نهایی، پیش‌نمایش را جایگزین می‌کند
 
     // ضدتکرار دوم: همان متن پشت‌سرهم با فاصلهٔ خیلی کم را نادیده بگیر
-    // (در کنار ضدتکرار داخل موتور — ایمنی مضاعف برای اندروید)
     const lastSeg = s.heardSegments[s.heardSegments.length - 1];
     if (lastSeg && lastSeg.trim() === text.trim() && s.feedback.length > 0) {
       const lastFb = s.feedback[s.feedback.length - 1];
@@ -192,33 +198,50 @@ export const useStudio = create<StudioState>((set, get) => ({
       return;
     }
 
-    // ——— انتخاب بهترین کاندید: متن اصلی + گزینه‌های جایگزین ASR ———
+    // ——— پیگیری ترتیبی حرف‌به‌حرف: کاندید اصلی + گزینه‌های جایگزین ASR ———
+    // نکته: seqAlign روی «برش از pos» کار می‌کند (پنجرهٔ جلو) و وضعیت‌ها را
+    // روی همان آبجکت‌های track اعمال می‌کند — پس اندیس‌های مطلق درست می‌مانند.
     const cfg = useSettings.getState();
     const preset = STRICTNESS_PRESETS[cfg.strictness];
-
-    const scoreOf = (r: ReturnType<typeof alignSegment>): number =>
-      (r.matchedAny || r.exact + r.fuzzy > 0 ? r.quality : 0) +
-      r.exact * 0.004 +
-      Math.max(0, r.newPos - s.pos) * 0.002;
-
-    // کپی دست‌نخورده برای هر کاندید (وضعیت‌های قبلی جلسه حفظ می‌شود)
     const makeClone = () => s.track.map((w) => ({ ...w }));
 
     let track = makeClone();
-    let res = alignSegment(track, s.pos, text, preset);
-    let bestScore = scoreOf(res);
+    let res = seqAlign(track.slice(s.pos), s.pos, text, preset);
+    let bestScore = seqScore(res, s.pos);
 
     if (alternatives && alternatives.length > 1) {
       for (const alt of alternatives.slice(1, 4)) {
         if (!alt?.trim() || alt.trim() === text) continue;
         const t2 = makeClone();
-        const r2 = alignSegment(t2, s.pos, alt, preset);
-        const sc = scoreOf(r2);
+        const r2 = seqAlign(t2.slice(s.pos), s.pos, alt, preset);
+        const sc = seqScore(r2, s.pos);
         if (sc > bestScore + 0.02) {
           res = r2;
           track = t2;
           bestScore = sc;
         }
+      }
+    }
+
+    const fb: FeedbackMsg[] = [...s.feedback];
+    let heardSegments = [...s.heardSegments, text];
+
+    // ——— تکرار آیه: اگر هیچ‌کدام جلو نچسبید، ببین آیا عقب‌تر (آیه‌ای که رد شده) مچ می‌شود ———
+    // تکرار هرگز نشانگر را جابه‌جا نمی‌کند (رفع «می‌پره»)
+    if (res.matchedCount === 0 && s.pos >= 4) {
+      const backStart = Math.max(0, s.pos - 24);
+      const bWin = s.track.slice(backStart, s.pos).map((w) => ({ ...w }));
+      const b = seqAlign(bWin, backStart, text, preset);
+      if (b.matchedCount >= 2) {
+        fb.push({ id: `m${++msgCounter}`, kind: "heard", text: text, at: Date.now() });
+        fb.push({
+          id: `m${++msgCounter}`,
+          kind: "praise",
+          text: "تکرار آیه — عالی برای تثبیت حفظ! هر وقت آماده بودی از همین‌جا ادامه بده.",
+          at: Date.now(),
+        });
+        set({ feedback: fb.length > FEEDBACK_CAP ? fb.slice(fb.length - FEEDBACK_CAP) : fb, heardSegments });
+        return;
       }
     }
 
@@ -243,8 +266,11 @@ export const useStudio = create<StudioState>((set, get) => ({
         at: Date.now(),
       });
     }
-    const insertRefIdx = Math.min(Math.max(0, res.newPos > 0 ? res.newPos - 1 : 0), Math.max(0, track.length - 1));
-    for (const ins of res.inserted) {
+    const insertRefIdx = Math.min(
+      Math.max(0, res.newCursor > 0 ? res.newCursor - 1 : 0),
+      Math.max(0, track.length - 1)
+    );
+    for (const ins of res.unknown) {
       newMistakes.push({
         type: "inserted",
         ayahIdx: track[insertRefIdx]?.ayahIdx ?? 0,
@@ -254,7 +280,6 @@ export const useStudio = create<StudioState>((set, get) => ({
       });
     }
 
-    const fb: FeedbackMsg[] = [...s.feedback];
     fb.push({ id: `m${++msgCounter}`, kind: "heard", text: text, at: Date.now() });
 
     if (res.wrong.length > 0) {
@@ -285,15 +310,52 @@ export const useStudio = create<StudioState>((set, get) => ({
       });
     }
 
+    // ——— خودهمگام‌سازی: اگر پیاپی کلمه‌ای نچسبید (گیر کردن پیگیری)،
+      // کل شنیده‌های جلسه را یک‌جا با بازه هم‌تراز کن تا نشانگر به جای درست برگردد ———
+    unknownStreak = res.matchedCount > 0 ? 0 : unknownStreak + res.unknown.length;
+    if (unknownStreak >= 8 && heardSegments.length >= 2) {
+      const heardAll = heardSegments.join(" ");
+      const swept = fullResweep(track, heardAll, preset);
+      if (swept !== track) {
+        const st2 = computeAccuracy(swept);
+        let sweptPos = 0;
+        for (let i = 0; i < swept.length; i++) {
+          if (swept[i].status !== "pending") sweptPos = i + 1;
+        }
+        unknownStreak = 0;
+        set({
+          track: swept,
+          pos: Math.max(0, sweptPos),
+          accuracy: st2.accuracy,
+          wordsCorrect: st2.correct,
+          heardSegments,
+          feedback: appendFeedback(fb, {
+            id: `m${++msgCounter}`,
+            kind: "info",
+            text: "همگام‌سازی دقیق انجام شد — از کلمهٔ هایلایت‌شده ادامه بده.",
+            at: Date.now(),
+          }),
+        });
+        return;
+      }
+      unknownStreak = 0;
+      fb.push({
+        id: `m${++msgCounter}`,
+        kind: "info",
+        text: "این جمله با بازهٔ انتخابی نمی‌خواند — اگر جای دیگری می‌خوانی، بازه را عوض کن یا روی کلمهٔ فعلی در متن بزن.",
+        at: Date.now(),
+      });
+    }
+
     set({
       track,
-      pos: res.newPos,
+      pos: Math.max(s.pos, res.newCursor), // نشانگر فقط رو به جلو
       mistakes: [...s.mistakes, ...newMistakes],
       feedback: fb.length > FEEDBACK_CAP ? fb.slice(fb.length - FEEDBACK_CAP) : fb,
       accuracy: stats.accuracy,
       wordsCorrect: stats.correct,
       lastAlignQuality: res.quality,
-      heardSegments: [...s.heardSegments, text],
+      heardSegments,
     });
   },
 
@@ -345,11 +407,15 @@ export const useStudio = create<StudioState>((set, get) => ({
       return { phase: "review" as const };
     }),
 
-  reset: () => set(emptyState),
+  reset: () => {
+    unknownStreak = 0;
+    set(emptyState);
+  },
 
   jumpTo: (wordIdx) =>
     set((s) => {
       if (wordIdx < 0 || wordIdx > s.track.length) return {};
+      unknownStreak = 0; // همگام‌سازی دستی کاربر — اعتماد تازه
       const track = s.track.map((w, i) => ({
         ...w,
         status: i < wordIdx && w.status === "pending" ? ("missed" as const) : w.status,
@@ -357,30 +423,27 @@ export const useStudio = create<StudioState>((set, get) => ({
       return { track, pos: wordIdx, preview: null };
     }),
 
-  /** پیش‌نمایش زندهٔ نتایج موقت SpeechRecognition — بدون تغییر وضعیت نهایی */
+  /** پیش‌نمایش زندهٔ حرف‌به‌حرف نتایج موقت — فقط رو به جلو، بدون هیچ پرشی */
   applyPreview: (text) => {
     if (!useSettings.getState().ghostPreview) return;
     const s = get();
     if (!text.trim() || s.track.length === 0) return;
     if (s.pos >= s.track.length) return;
     if (s.phase !== "recording") return;
+    const preset = STRICTNESS_PRESETS[useSettings.getState().strictness];
     const segWords = text.trim().split(/\s+/).length;
-    const winLen = Math.min(s.track.length - s.pos, segWords + 14);
     const winStart = s.pos;
+    const winLen = Math.min(s.track.length - winStart, segWords + 6);
     const win = s.track.slice(winStart, winStart + winLen).map((w) => ({ ...w }));
-    const res = alignSegment(
-      win,
-      0,
-      text,
-      STRICTNESS_PRESETS[useSettings.getState().strictness]
-    );
+    const res = seqAlign(win, winStart, text, preset);
     const overrides: Record<number, TrackWord["status"]> = {};
-    for (let i = 0; i < win.length; i++) {
-      if (win[i].status !== s.track[winStart + i].status) {
-        overrides[winStart + i] = win[i].status;
+    for (const m of res.marks) {
+      if (s.track[m.idx]?.status !== m.status) {
+        overrides[m.idx] = m.status;
       }
     }
-    const absPos = Math.min(s.track.length, winStart + res.newPos);
+    // seqAlign تضمین می‌کند newCursor حداکثر segWords+4 جلوتر است — پرش ناممکن
+    const absPos = Math.min(s.track.length, Math.max(s.pos, res.newCursor));
     set({ preview: { overrides, pos: absPos } });
   },
 
