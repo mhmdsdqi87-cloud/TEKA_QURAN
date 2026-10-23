@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// حساب کاربری حافظ — برای ورود و ثبت‌نام
+model User {
+  id           String      @id @default(cuid())
+  username     String      @unique // نام کاربری یکتا
+  passwordHash String      // scrypt: salt:hash
+  name         String      @default("") // نمایش نام
+  createdAt    DateTime    @default(now())
+
+  tokens AuthToken[]
+}
+
+// توکن نشست ورود — کوکی httpOnly
+model AuthToken {
+  token     String   @id
+  userId    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// یک جلسهٔ تلاوت (هر بار که کاربر یک بازهٔ آیات را تلاوت می‌کند)
+model Session {
+  id           String   @id @default(cuid())
+  userId       String // شناسهٔ کاربر (id حساب) یا شناسهٔ محلی قدیمی — بدون FK تا uidهای محلی هم کار کنند
+  surahNumber  Int
+  surahName    String
+  ayahFrom     Int
+  ayahTo       Int
+  accuracy     Float // 0..100
+  durationSec  Int
+  wordsTotal   Int
+  wordsCorrect Int
+  mistakes     String // JSON array of mistakes
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

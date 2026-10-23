@@ -1,0 +1,415 @@
+/* ==========================================================================
+   Hero — صحنهٔ سه‌بعدی کعبه («حافظ»)
+   CSS خالص: مکعب سه‌بعدی، میدان ستاره، هالهٔ طواف، انیمیشن پرتاب
+   پالت: زمردی/سبز + طلایی + خنثی — بدون هیچ تصویر خارجی
+   ========================================================================== */
+
+/* ---------------- صحنه ---------------- */
+.kaaba-scene {
+  /* اندازهٔ واکنش‌گرا */
+  --kz-size: clamp(180px, 30vw, 300px);
+  --kz-h: calc(var(--kz-size) * 1.16); /* کعبه کمی کشیده‌تر از مکعب کامل است */
+  --kz-d: calc(var(--kz-size) * 0.88);
+
+  /* طلایی‌های محلی (مستقل از روشن/تاریک تم) */
+  --kz-gold-hi: oklch(0.88 0.1 95);
+  --kz-gold: oklch(0.8 0.13 85);
+  --kz-gold-deep: oklch(0.6 0.12 78);
+
+  /* زاویهٔ پایهٔ مکعب — نمای کمی از بالا + چرخش ملایم */
+  --kz-rx: -8deg;
+  --kz-ry: -24deg;
+
+  position: relative;
+  width: var(--kz-size);
+  /* فضای اضافهٔ پایین برای هالهٔ طواف */
+  height: calc(var(--kz-h) + var(--kz-size) * 0.3);
+  perspective: calc(var(--kz-size) * 4.6);
+  perspective-origin: 50% 36%;
+  transform-origin: 50% 50%;
+  z-index: 2;
+}
+
+/* ---------------- میدان ستاره ---------------- */
+.kaaba-stars {
+  position: absolute;
+  inset: -45% -38%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.kaaba-star {
+  position: absolute;
+  border-radius: 9999px;
+  animation: kaaba-star-twinkle 3.4s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+.kaaba-star-warm {
+  background: radial-gradient(
+    circle,
+    oklch(0.96 0.04 95) 0%,
+    oklch(0.85 0.1 90 / 0.65) 48%,
+    transparent 72%
+  );
+}
+
+.kaaba-star-cool {
+  background: radial-gradient(
+    circle,
+    oklch(0.97 0.02 160) 0%,
+    oklch(0.85 0.07 165 / 0.55) 50%,
+    transparent 72%
+  );
+}
+
+@keyframes kaaba-star-twinkle {
+  0%,
+  100% {
+    opacity: var(--o-min, 0.2);
+    transform: scale(1);
+  }
+  50% {
+    opacity: var(--o-max, 0.9);
+    transform: scale(1.35);
+  }
+}
+
+/* ---------------- هالهٔ طواف (حلقهٔ بیضوی نور زیر کعبه) ---------------- */
+.kaaba-orbit-glow {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--kz-size) * 0.02);
+  width: calc(var(--kz-size) * 1.9);
+  height: calc(var(--kz-size) * 0.34);
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      50% 50% at 50% 50%,
+      transparent 38%,
+      oklch(0.8 0.13 85 / 0.17) 54%,
+      oklch(0.7 0.12 160 / 0.1) 64%,
+      transparent 75%
+    ),
+    radial-gradient(
+      50% 50% at 50% 50%,
+      oklch(0.8 0.13 85 / 0.08) 0%,
+      transparent 55%
+    );
+  filter: blur(10px);
+  z-index: 1;
+  pointer-events: none;
+  animation: kaaba-orbit-pulse 5.5s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+@keyframes kaaba-orbit-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: translateX(-50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.06);
+  }
+}
+
+/* ---------------- شناوری آرام کعبه ---------------- */
+.kaaba-float {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--kz-h);
+  transform-style: preserve-3d;
+  animation: kaaba-idle-float 7.5s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes kaaba-idle-float {
+  0%,
+  100% {
+    transform: translateY(0) rotateY(-2.5deg);
+  }
+  50% {
+    transform: translateY(calc(var(--kz-size) * -0.045)) rotateY(2.5deg);
+  }
+}
+
+/* ---------------- مکعب ---------------- */
+.kaaba-cube {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--kz-size);
+  height: var(--kz-h);
+  margin-left: calc(var(--kz-size) / -2);
+  margin-top: calc(var(--kz-h) / -2);
+  transform-style: preserve-3d;
+  transform: rotateX(var(--kz-rx)) rotateY(var(--kz-ry));
+}
+
+/* وجه‌ها: مات سیاه + نور لبهٔ طلایی ملایم */
+.kaaba-face {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  backface-visibility: hidden;
+  box-shadow:
+    inset 0 0 0 1px oklch(0.8 0.13 85 / 0.11),
+    inset 0 0 30px oklch(0 0 0 / 55%),
+    0 0 26px oklch(0.8 0.13 85 / 0.07);
+}
+
+.kaaba-face-front,
+.kaaba-face-back {
+  width: var(--kz-size);
+  height: var(--kz-h);
+}
+.kaaba-face-left,
+.kaaba-face-right {
+  width: var(--kz-d);
+  height: var(--kz-h);
+}
+.kaaba-face-top,
+.kaaba-face-bottom {
+  width: var(--kz-size);
+  height: var(--kz-d);
+}
+
+.kaaba-face-front {
+  transform: translate(-50%, -50%) rotateY(0deg) translateZ(calc(var(--kz-d) / 2));
+  background: radial-gradient(130% 110% at 32% 22%, #191919 0%, #101010 42%, #000 100%);
+}
+.kaaba-face-back {
+  transform: translate(-50%, -50%) rotateY(180deg) translateZ(calc(var(--kz-d) / 2));
+  background: radial-gradient(130% 110% at 60% 25%, #151515 0%, #0d0d0d 45%, #000 100%);
+}
+.kaaba-face-right {
+  transform: translate(-50%, -50%) rotateY(90deg) translateZ(calc(var(--kz-size) / 2));
+  background: radial-gradient(120% 110% at 70% 25%, #131313 0%, #0a0a0a 45%, #000 100%);
+}
+.kaaba-face-left {
+  transform: translate(-50%, -50%) rotateY(-90deg) translateZ(calc(var(--kz-size) / 2));
+  background: radial-gradient(120% 110% at 28% 25%, #101010 0%, #080808 45%, #000 100%);
+}
+.kaaba-face-top {
+  transform: translate(-50%, -50%) rotateX(90deg) translateZ(calc(var(--kz-h) / 2));
+  background: radial-gradient(110% 110% at 50% 40%, #1c1c1c 0%, #0e0e0e 55%, #050505 100%);
+  box-shadow:
+    inset 0 0 0 1px oklch(0.8 0.13 85 / 0.14),
+    inset 0 0 34px oklch(0 0 0 / 60%);
+}
+.kaaba-face-bottom {
+  transform: translate(-50%, -50%) rotateX(-90deg) translateZ(calc(var(--kz-h) / 2));
+  background: #030303;
+}
+
+/* حجر اسماعیل — نوار طلایی افقی روی وجه جلو و عقب */
+.kaaba-face-front::after,
+.kaaba-face-back::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: 56%;
+  height: 8.5%;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      oklch(0.3 0.06 80 / 0.35) 0 2px,
+      transparent 2px 14px
+    ),
+    linear-gradient(
+      180deg,
+      var(--kz-gold-deep) 0%,
+      var(--kz-gold) 45%,
+      oklch(0.45 0.08 75) 100%
+    );
+  box-shadow:
+    0 0 18px oklch(0.8 0.13 85 / 0.28),
+    0 1px 0 oklch(0.9 0.06 90 / 0.25);
+  opacity: 0.92;
+}
+
+/* درِ طلایی ملایم روی وجه جلو (زیر حجر) */
+.kaaba-face-front::before {
+  content: "";
+  position: absolute;
+  top: 66%;
+  left: 17%;
+  width: 20%;
+  height: 30%;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(
+    180deg,
+    oklch(0.4 0.07 82) 0%,
+    oklch(0.56 0.1 85) 55%,
+    oklch(0.35 0.06 78) 100%
+  );
+  border: 1px solid oklch(0.85 0.1 90 / 0.45);
+  border-bottom: none;
+  box-shadow:
+    0 0 14px oklch(0.8 0.13 85 / 0.22),
+    inset 0 0 10px oklch(0 0 0 / 0.45);
+}
+
+/* ---------------- نور طواف: نقطهٔ درخشانِ دوران‌کننده ---------------- */
+.kaaba-tawaf {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: 0;
+  height: 0;
+  transform-style: preserve-3d;
+  animation: kaaba-tawaf-orbit 11s linear infinite;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.kaaba-tawaf-light {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(var(--kz-size) * 0.055);
+  height: calc(var(--kz-size) * 0.055);
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 9999px;
+  transform: translate(-50%, -50%) translateZ(calc(var(--kz-size) * 0.86));
+  background: radial-gradient(
+    circle,
+    oklch(0.97 0.05 100) 0%,
+    oklch(0.85 0.12 92) 55%,
+    oklch(0.7 0.12 88 / 0.4) 100%
+  );
+  box-shadow:
+    0 0 12px 2px oklch(0.85 0.13 90 / 0.75),
+    0 0 34px 8px oklch(0.8 0.13 85 / 0.35);
+  will-change: transform;
+}
+
+/* خلاف جهت عقربهٔ ساعت (از بالا) — همان جهت طواف واقعی */
+@keyframes kaaba-tawaf-orbit {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(360deg);
+  }
+}
+
+/* ---------------- انیمیشن پرتاب (شروع جلسه) ---------------- */
+.kaaba-launch {
+  z-index: 50;
+  transform-origin: 50% 50%;
+  animation: kaaba-launch-zoom 1.15s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, filter, perspective;
+}
+
+/* انفجار نور طلایی */
+.kaaba-launch::after {
+  content: "";
+  position: absolute;
+  inset: -35%;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    oklch(0.9 0.1 95 / 0.55) 0%,
+    oklch(0.8 0.13 85 / 0.25) 35%,
+    transparent 65%
+  );
+  opacity: 0;
+  animation: kaaba-launch-burst 1.15s ease-out forwards;
+}
+
+/* چرخش نرم مکعب هنگام پرتاب */
+.kaaba-launch .kaaba-cube {
+  animation: kaaba-launch-spin 1.15s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes kaaba-launch-zoom {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+    perspective: calc(var(--kz-size) * 4.6);
+  }
+  30% {
+    transform: scale(1.06);
+    filter: brightness(1.18);
+  }
+  100% {
+    transform: scale(2.4);
+    filter: brightness(1.6) saturate(1.15);
+    perspective: calc(var(--kz-size) * 2.4);
+  }
+}
+
+@keyframes kaaba-launch-spin {
+  from {
+    transform: rotateX(var(--kz-rx)) rotateY(var(--kz-ry));
+  }
+  to {
+    transform: rotateX(var(--kz-rx)) rotateY(calc(var(--kz-ry) + 42deg));
+  }
+}
+
+@keyframes kaaba-launch-burst {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+/* ---------------- احترام به کاهش حرکت ---------------- */
+@media (prefers-reduced-motion: reduce) {
+  .kaaba-float,
+  .kaaba-star,
+  .kaaba-orbit-glow {
+    animation: none;
+  }
+  .kaaba-star {
+    opacity: 0.5;
+  }
+  /* نقطهٔ طواف ثابت می‌ماند (چراغی کنار کعبه) */
+  .kaaba-tawaf {
+    animation: none;
+    transform: rotateY(35deg);
+  }
+  /* پرتاب: بدون بزرگ‌نمایی و چرخش؛ فقط روشن‌شدن کوتاه */
+  .kaaba-launch,
+  .kaaba-launch .kaaba-cube,
+  .kaaba-launch::after {
+    animation: none;
+  }
+  .kaaba-launch {
+    filter: brightness(1.25);
+  }
+}
+
+/* ---------------- کلاس‌های کمکی هیرو (مستقل از تم) ---------------- */
+.hero-gold-text {
+  color: oklch(0.86 0.1 92);
+}
+.hero-soft {
+  color: oklch(0.91 0.015 100 / 0.78);
+}
+.hero-softer {
+  color: oklch(0.91 0.015 100 / 0.55);
+}
+.hero-hr-gold {
+  background: linear-gradient(
+    to left,
+    transparent,
+    oklch(0.8 0.13 85 / 0.55),
+    transparent
+  );
+}
