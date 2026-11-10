@@ -1,4 +1,5 @@
 import { Heart, ExternalLink } from "lucide-react";
+import pkg from "../../package.json";
 
 /**
  * فوتر شیشه‌ای — «ساخته شده توسط گروه TEKA»
@@ -39,6 +40,13 @@ export default function SiteFooter() {
             className="size-3.5 text-gold/70 opacity-60 transition-opacity group-hover:opacity-100"
             aria-hidden="true"
           />
+          <span
+            dir="ltr"
+            title={`نسخهٔ حافظ — ${pkg.version}`}
+            className="ms-0.5 rounded-md border border-gold/25 bg-gold/5 px-1.5 py-0.5 font-mono text-[10px] leading-none text-gold/70 transition-colors group-hover:border-gold/50 group-hover:text-gold"
+          >
+            v{pkg.version}
+          </span>
         </a>
       </div>
     </footer>

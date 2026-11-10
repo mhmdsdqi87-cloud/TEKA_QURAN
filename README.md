@@ -10,6 +10,7 @@
 
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript&color=3178c6)](https://www.typescriptlang.org)
+[![Version](https://img.shields.io/badge/version-1.0.0-c9a227?logo=semver&logoColor=white)](CHANGELOG.md)
 [![PWA](https://img.shields.io/badge/PWA-Installable-5A0FC8?logo=pwa)](https://teka-quran.vercel.app)
 [![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?logo=prisma)](https://www.prisma.io)
 [![Live](https://img.shields.io/badge/🌐_Live-teka--quran.vercel.app-10b981)](https://teka-quran.vercel.app)
@@ -23,13 +24,23 @@
 
 <div align="center">
 
+## 🖼 ویوهای پروژه · App Views
+
+| ![خانه](docs/screens/home.png) |
+|:---:|
+| **🏠 خانه** — کعبه، آسمان پرستاره و شروعِ جلسه با یک کلیک |
+
 | ![استودیو](docs/screens/studio.png) |
 |:---:|
-| *استودیوی تلاوت — هایلایت زندهٔ کلمه‌به‌کلمه، همگام با صدای تو* |
+| **🎙 استودیوی تلاوت** — هایلایت زندهٔ کلمه‌به‌کلمه، همگام با صدای تو |
 
 | ![تمام‌صفحه](docs/screens/fullscreen.png) | ![بازبینی](docs/screens/review.png) |
 |:---:|:---:|
-| *نمای تمام‌صفحه + ترنسکریپت زنده* | *نظر معلم AI + نقشهٔ حرارتی آیه‌ها* |
+| **📺 نمای تمام‌صفحه** — صفحهٔ ثابت + ترنسکریپت زنده | **🧠 بازبینی** — نظر معلم AI + نقشهٔ حرارتی آیه‌ها |
+
+| ![دربارهٔ ما](docs/screens/about.png) |
+|:---:|
+| **💚 دربارهٔ ما** — تقدیم به شعله نعمتی، بهترین مادر دنیا |
 
 </div>
 
