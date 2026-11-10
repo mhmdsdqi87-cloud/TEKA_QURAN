@@ -35,6 +35,8 @@ export interface StudioSettings {
   hideUpcoming: boolean;
   /** شمارش معکوس ۳-۲-۱ */
   countdown: boolean;
+  /** نمای تمام‌صفحهٔ تلاوت — صفحه موقع تلاوت تکون نمی‌خورد */
+  fullscreenSession: boolean;
   /** اندازهٔ متن آیات */
   textSize: TextSize;
   /** تکرار خودکار بازه پس از پایان (۰ = خاموش) — تثبیت حفظ */
@@ -55,6 +57,7 @@ export const defaultSettings: StudioSettings = {
   ghostPreview: true,
   hideUpcoming: false,
   countdown: true,
+  fullscreenSession: true,
   textSize: "md",
   repeatRounds: 0,
   asrLang: "ar-SA",

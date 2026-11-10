@@ -64,6 +64,8 @@ export interface StudioState {
   preview: PreviewState | null;
   /** دورهای تکرار باقی‌ماندهٔ جلسه (از تنظیمات repeatRounds) */
   roundsLeft: number;
+  /** ترنسکریپت زندهٔ موقت (interim) — برای نمایش در نمای تمام‌صفحه */
+  interim: string;
 
   setRange: (surah: SurahLite, from: number, to: number, ayahs: AyahLite[]) => void;
   setShowTranslation: (v: boolean) => void;
@@ -78,6 +80,7 @@ export interface StudioState {
   jumpTo: (wordIdx: number) => void;
   applyPreview: (text: string) => void;
   clearPreview: () => void;
+  setInterim: (t: string) => void;
 }
 
 let msgCounter = 0;
@@ -142,6 +145,7 @@ const emptyState = {
   lastAlignQuality: 0,
   preview: null as PreviewState | null,
   roundsLeft: 0,
+  interim: "",
 };
 
 export const useStudio = create<StudioState>((set, get) => ({
@@ -210,7 +214,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   applyHeard: (text, alternatives) => {
     const s = get();
     if (!text.trim() || s.track.length === 0) return;
-    set({ preview: null }); // نتیجهٔ نهایی، پیش‌نمایش را جایگزین می‌کند
+    set({ preview: null, interim: "" }); // نتیجهٔ نهایی، پیش‌نمایش و ترنسکریپت موقت را جایگزین می‌کند
 
     // ——— باسمهٔ آغازین: اگر شنیده شد (به‌جز فاتحه)، حذف می‌شود تا خطا نشمارد ———
     let heard = text;
@@ -619,7 +623,10 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ preview: { overrides, pos: absPos } });
   },
 
-  clearPreview: () => set({ preview: null }),
+  clearPreview: () => set({ preview: null, interim: "" }),
+
+  /** ترنسکریپت زندهٔ موقت — سقف ۱۲۰ کاراکتر برای نمایش روان */
+  setInterim: (t) => set({ interim: t.slice(-120) }),
 }));
 
 const praises = [

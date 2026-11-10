@@ -12,7 +12,7 @@ interface AyahGroup {
   words: TrackWord[];
 }
 
-export default function LiveAyahView() {
+export default function LiveAyahView({ variant = "inline" }: { variant?: "inline" | "fs" }) {
   const track = useStudio((s) => s.track);
   const ayahs = useStudio((s) => s.ayahs);
   const pos = useStudio((s) => s.pos);
@@ -53,10 +53,16 @@ export default function LiveAyahView() {
   useEffect(() => {
     if (!autoScroll) return;
     const t = setTimeout(() => {
-      activeAyahRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
+      // پیمایش فقط داخل کانتینر آیات — هرگز body/صفحه اصلی تکون نمی‌خورد
+      // (scrollIntoView همهٔ اجداد اسکرول‌پذیر — حتی overflow:hidden — را می‌جنباند)
+      const el = activeAyahRef.current;
+      const container = scrollRef.current;
+      if (!el || !container) return;
+      const cRect = container.getBoundingClientRect();
+      const eRect = el.getBoundingClientRect();
+      const target =
+        container.scrollTop + (eRect.top - cRect.top) - container.clientHeight / 2 + el.clientHeight / 2;
+      container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
     }, 120);
     return () => clearTimeout(t);
   }, [activeAyahIdx, autoScroll]);
@@ -89,7 +95,11 @@ export default function LiveAyahView() {
   return (
     <div
       ref={scrollRef}
-      className="nice-scroll max-h-[56svh] min-h-56 overflow-y-auto rounded-2xl border border-gold/15 bg-card/50 p-4 sm:p-6"
+      className={`nice-scroll overscroll-contain rounded-2xl border border-gold/15 bg-card/50 p-4 sm:p-6 ${
+        variant === "fs"
+          ? "min-h-0 flex-1 overflow-y-auto"
+          : "max-h-[56svh] min-h-56 overflow-y-auto"
+      }`}
       role="region"
       aria-label="متن زندهٔ تلاوت"
     >

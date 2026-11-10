@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   Bot,
@@ -12,6 +12,8 @@ import {
   Loader2,
   Mic,
   MicOff,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   RotateCcw,
@@ -37,6 +39,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useToast } from "@/hooks/use-toast";
 import LiveAyahView from "@/components/live-ayah-view";
 import FeedbackPanel from "@/components/feedback-panel";
+import FullscreenSession from "@/components/fullscreen-session";
 import { toFa, type SurahMetaClient } from "@/components/surah-explorer";
 import { RecitationRecorder, listMicrophones } from "@/lib/recorder";
 import { SpeechEngine, isBrowserSpeechSupported } from "@/lib/speech";
@@ -192,6 +195,8 @@ export default function RecitationStudio() {
   const [saved, setSaved] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [bookmark, setBookmark] = useState<HafezBookmark | null>(null);
+  /** نمای تمام‌صفحهٔ تلاوت — با شروع ضبط باز می‌شود تا صفحه تکون نخورد */
+  const [fsOpen, setFsOpen] = useState(false);
 
   // نشانک ادامهٔ حفظ — فقط سمت کلاینت (localStorage)
   useEffect(() => {
@@ -395,13 +400,20 @@ export default function RecitationStudio() {
     // قفل لاگین: کاربر تا وارد نشود، اجازهٔ تلاوت (ارسال صدا به هوش مصنوعی) ندارد
     const au = useAuth.getState();
     if (!au.user) {
-      toast({
-        title: "اول وارد حساب شو",
-        description: "برای تلاوت، ذخیرهٔ آمار و پیام به استاد، وارد شو یا حساب بساز.",
-        variant: "destructive",
-      });
-      au.openDialog();
-      return;
+      // اگر بررسی حساب هنوز در جریان است، کمی صبر کن (ریسِ رفرشِ اولِ صفحه —
+      // وگرنه کاربر لاگین‌شده هم دیالوگ ورود می‌گیرد)
+      if (!au.ready) {
+        await Promise.race([au.refresh(), new Promise((r) => setTimeout(r, 2500))]);
+      }
+      if (!useAuth.getState().user) {
+        toast({
+          title: "اول وارد حساب شو",
+          description: "برای تلاوت، ذخیرهٔ آمار و پیام به استاد، وارد شو یا حساب بساز.",
+          variant: "destructive",
+        });
+        useAuth.getState().openDialog();
+        return;
+      }
     }
     if (!surah || track.length === 0) {
       toast({ title: "اول بازه را انتخاب کن", description: "سوره و بازهٔ آیات را مشخص کن." });
@@ -433,6 +445,7 @@ export default function RecitationStudio() {
         const engine = new SpeechEngine({
           lang: useSettings.getState().asrLang,
           onInterim: (text) => {
+            useStudio.getState().setInterim(text); // ترنسکریپت زنده برای نمای تمام‌صفحه
             const now = performance.now();
             if (now - lastPreviewAtRef.current < previewThrottleRef.current) return;
             lastPreviewAtRef.current = now;
@@ -450,6 +463,9 @@ export default function RecitationStudio() {
         engineRef.current = engine;
         startWatchdog(); // اگر اندروید موتور را کشت، هر ۳ ثانیه زنده می‌شود
         void requestWakeLock(); // صفحه هنگام تلاوت خاموش نشود
+        // ——— نمای تمام‌صفحه: صفحه پشت جلسه فریز می‌شود و دیگر تکون نمی‌خورد ———
+        if (useSettings.getState().fullscreenSession) setFsOpen(true);
+        vibrate(15);
       } else {
         // فالبک: ضبط قطعه‌ای + ASR سروری
         const rec = new RecitationRecorder({
@@ -482,6 +498,7 @@ export default function RecitationStudio() {
   }, [surah, track.length, micId, processQueue, refreshMics, startWatchdog, toast, st, countdown]);
 
   const stopRecording = useCallback(async () => {
+    setFsOpen(false); // اگر تمام‌صفحه باز است، ببند
     if (tickRef.current) {
       clearInterval(tickRef.current);
       tickRef.current = null;
@@ -574,6 +591,11 @@ export default function RecitationStudio() {
       void stopRecording();
     }
   }, [finishedAll, phase, cfg.autoStop, stopRecording]);
+
+  // اگر توقف خودکار جلسه را تمام کرد، نمای تمام‌صفحه هم بسته شود (کارت بازبینی دیده شود)
+  useEffect(() => {
+    if (phase === "review" && fsOpen) setFsOpen(false);
+  }, [phase, fsOpen]);
 
   /* ---------- هشدار لحظه‌ای خطا: بوق + لرزش + توست + فلاش ---------- */
   const [flash, setFlash] = useState(0);
@@ -924,6 +946,17 @@ export default function RecitationStudio() {
                     >
                       <Square className="size-6" aria-hidden="true" />
                     </button>
+                    {/* نمای تمام‌صفحه — بدون تکون‌خوردن صفحه */}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-11 rounded-full"
+                      onClick={() => setFsOpen(true)}
+                      aria-label="نمای تمام‌صفحهٔ تلاوت"
+                      title="نمای تمام‌صفحه — صفحه ثابت می‌ماند"
+                    >
+                      <Maximize2 className="size-4" />
+                    </Button>
                   </>
                 ) : (
                   <button
@@ -1221,6 +1254,16 @@ export default function RecitationStudio() {
           )}
         </div>
       )}
+      {/* نمای تمام‌صفحهٔ تلاوت — با زدن میکروفن باز می‌شود؛ سایت پشتش فریز است */}
+      <AnimatePresence>
+        {fsOpen && (phase === "recording" || phase === "paused") && (
+          <FullscreenSession
+            onClose={() => setFsOpen(false)}
+            onStop={() => void stopRecording()}
+            onTogglePause={togglePause}
+          />
+        )}
+      </AnimatePresence>
     </section>
   );
 }
@@ -1284,7 +1327,7 @@ function StudioSettingsCard() {
               <SlidersHorizontal className="size-4 text-gold" aria-hidden="true" />
               تنظیمات پیشرفته
               <span className="rounded-full bg-gold/12 px-2 py-0.5 text-[9px] font-bold text-gold">
-                {toFa(13)} گزینه
+                {toFa(14)} گزینه
               </span>
             </span>
             <ChevronDown
@@ -1392,6 +1435,9 @@ function StudioSettingsCard() {
               </SettingRow>
               <SettingRow label="تمرین کور" hint="کلمات پیش‌رو پنهان می‌شوند تا از حفظ بخوانی — چالش‌برانگیز!">
                 <Switch checked={cfg.hideUpcoming} onCheckedChange={(v) => update("hideUpcoming", v)} aria-label="تمرین کور" />
+              </SettingRow>
+              <SettingRow label="نمای تمام‌صفحهٔ تلاوت" hint="با شروع تلاوت، صفحهٔ ثابت باز می‌شود و سایت دیگر تکون نمی‌خورد">
+                <Switch checked={cfg.fullscreenSession} onCheckedChange={(v) => update("fullscreenSession", v)} aria-label="نمای تمام‌صفحه" />
               </SettingRow>
             </div>
 

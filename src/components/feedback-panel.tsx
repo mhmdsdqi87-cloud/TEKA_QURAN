@@ -17,14 +17,19 @@ const KIND_STYLE: Record<
 
 export default function FeedbackPanel() {
   const feedback = useStudio((s) => s.feedback);
-  const endRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    // پیمایش فقط داخل خود پنل — scrollIntoView اجداد (از جمله صفحه) را می‌جنباند
+    // و باعث پرش بالا/پایین کل سایت حین تلاوت می‌شد
+    const box = boxRef.current;
+    if (!box) return;
+    box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
   }, [feedback.length]);
 
   return (
     <div
+      ref={boxRef}
       className="nice-scroll max-h-96 min-h-40 overflow-y-auto rounded-2xl border border-gold/15 bg-card/50 p-3"
       role="log"
       aria-live="polite"
@@ -68,7 +73,6 @@ export default function FeedbackPanel() {
           })}
         </ul>
       )}
-      <div ref={endRef} />
     </div>
   );
 }
