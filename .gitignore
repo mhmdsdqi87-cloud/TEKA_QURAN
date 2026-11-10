@@ -55,3 +55,4 @@ server.log
 db/*.db
 db/*.db-journal
 quran.json.bak
+tool-results/

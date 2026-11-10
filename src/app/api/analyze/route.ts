@@ -12,6 +12,8 @@ interface AnalyzeBody {
   heard?: string; // کل متن شنیده‌شده
   mistakes?: { type: string; ayahNumber: number; expected?: string; heard?: string }[];
   accuracy?: number;
+  /** آمار آیه‌به‌آیه از موتور تطبیق — معلم با این جدول آیه‌های ضعیف را ریشه‌یابی می‌کند */
+  perAyah?: { n: number; total: number; correct: number; bad: number; missed: number }[];
 }
 
 const SYSTEM_PROMPT = `تو «استاد تحفیظ» هستی؛ استاد چند ده‌سالهٔ قرآن کریم، متخصص حفظ و تجوید، و مربی حافظان در اپ «حافظ» (گروه TEKA). کار تو نقد تلاوت حافظان است — دقیق، منصف، و سازنده.
@@ -52,6 +54,7 @@ export async function POST(req: Request) {
   const heard = (body.heard ?? "").slice(0, 4000);
   const mistakes = Array.isArray(body.mistakes) ? body.mistakes.slice(0, 40) : [];
   const accuracy = typeof body.accuracy === "number" ? body.accuracy : null;
+  const perAyah = Array.isArray(body.perAyah) ? body.perAyah.slice(0, 300) : [];
 
   if (!expected && !heard) {
     return NextResponse.json({ error: "داده‌ای برای تحلیل نیست" }, { status: 400 });
@@ -83,7 +86,14 @@ ${heard || "(چیزی شنیده نشد)"}
 خطاهای شناسایی‌شدهٔ الگوریتمی:
 ${mistakes.length ? JSON.stringify(mistakes) : "(خطای ساختاری ثبت نشده)"}
 
-توجه: متن قرآن با رسم‌الخط عثمانی و متن شنیده‌شده خروجی ASR است؛ کلمات مشابه با اختلاف اعراب یا الف/ی را خطا حساب نکن. خطاهای واقعی (کلمهٔ متفاوت، جاافتادگی، اضافه‌گویی) را در mistakes برگردان. اگر ASR متن را خراب transfer کرده ولی الگوی کلی درست است، سخت‌گیر نباش.
+آمار آیه‌به‌آیه (n=شماره آیه، total=تعداد کلمه، correct=درست، bad=اشتباه، missed=جاافتاده):
+${perAyah.length ? JSON.stringify(perAyah) : "(موجود نیست)"}
+
+توجه:
+- متن قرآن با رسم‌الخط عثمانی و متن شنیده‌شده خروجی ASR است؛ کلمات مشابه با اختلاف اعراب یا الف/ی را خطا حساب نکن.
+- خطاهای واقعی (کلمهٔ متفاوت، جاافتادگی، اضافه‌گویی) را در mistakes برگردان. اگر ASR متن را خراب transfer کرده ولی الگوی کلی درست است، سخت‌گیر نباش.
+- با جدول آیه‌به‌آیه، آیه‌های ضعیف‌تر را دقیق نام ببر و برایشان تمرین اتصال بده (مثلاً «آیهٔ ۳ را با اولین کلمهٔ آیهٔ ۴ ده بار پیوسته بخوان»).
+- اگر دقت بالای ۹۰٪ است، بنیان‌گذارِ اپ که خودش حافظ است، از تشویق صادقانهٔ تو برای ادامهٔ مسیر خوشش می‌آید.
 فقط JSON برگردان.`;
 
     const raw = (await chatComplete(

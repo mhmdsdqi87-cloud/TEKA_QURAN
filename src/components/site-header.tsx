@@ -3,7 +3,7 @@
 import { useTheme } from "next-themes";
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { BookOpenText, ChartNoAxesColumn, Download, LogIn, LogOut, Mic, Moon, Sparkles, Sun } from "lucide-react";
+import { BookOpenText, ChartNoAxesColumn, Download, Info, LogIn, LogOut, Mic, Moon, Sparkles, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-store";
 
@@ -12,6 +12,7 @@ const NAV = [
   { href: "#quran", label: "قرآن", icon: BookOpenText },
   { href: "#features", label: "امکانات", icon: Sparkles },
   { href: "#stats", label: "آمار", icon: ChartNoAxesColumn },
+  { href: "#about", label: "درباره ما", icon: Info },
 ];
 
 /** رویداد پیش‌ازنصب کروم (اندروید/دسکتاپ) */

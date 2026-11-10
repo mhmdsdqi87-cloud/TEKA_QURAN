@@ -1,19 +1,23 @@
 /**
- * موتور پیگیری ترتیبی حرف‌به‌حرف — نسخهٔ ۲ «صفر خطای کاذب»
+ * موتور پیگیری ترتیبی حرف‌به‌حرف — نسخهٔ ۳ «تأیید دومرحله‌ای»
  *
  * فلسفه (رفع ریشه‌ای «پشت‌سرهم بوق و خطا روی تلاوت درست»):
- * هرگز نباید تلاوتِ درستِ کاربر خطا شمرده شود — حتی اگر ASR کلمه را خراب بشنود.
- * پس:
+ * هیچ سیگنال خطایی نباید از یک قطعهٔ ASR به‌تنهایی صادر شود — چون ASR خودش
+ * کلمه‌ها را می‌اندازد/خراب می‌کند. پس هر خطا فقط با «دو شاهد مستقل» صادر می‌شود:
  *
  * ۱) تطبیق مستقیم → سبز، جلو.
  * ۲) تطبیق نرم (گاربل ASR) → سبز، جلو — هرگز خطا نیست.
- * ۳) جاافتادگی ۱-۲ کلمه‌ای → کهربایی «ملایم» (بی‌بوق) — عمدتاً حذف ASR است.
- * ۴) جاافتادگی ۳-۶ کلمه‌ای یا پرش آیه‌ای (با تأیید دومین کلمه) → کهربایی بلند + بوق.
- * ۵) کلمهٔ ناشناس → «پارک» می‌شود؛ فقط اگر کلمهٔ بعدی نشانگر را از رویش رد کند
- *    (یعنی قطعاً کلمهٔ دیگری خوانده شده) قرمز می‌شود؛ وگرنه ساکت رها می‌شود.
- * ۶) نویز خالص ASR → هیچ: نه نشانگر، نه خطا، نه بوق.
+ * ۳) مورفولوژی (ضمیر/ال متفاوت) → سبز، جلو — هرگز خطا نیست.
+ * ۴) جاافتادگی ۱-۲ کلمه‌ای → «هیچ». کلمه pending می‌ماند؛ نه رنگ خطا، نه بوق.
+ *    (تقریباً همیشه حذف ASR است؛ بازبینی نهایی حسابش می‌کند)
+ * ۵) شکاف ۳+ کلمه‌ای → کلمات کهربایی «ملایم» می‌شوند و «منتظر تأیید» می‌مانند.
+ *    بوق فقط وقتی که قطعهٔ بعدی هم از آن ناحیه عبور کند (تأیید دومرحله‌ای).
+ *    اگر قطعهٔ بعدی به همان ناحیه برگردد → شکاف تبرئه و کلمات pending می‌شوند.
+ * ۶) جانشینی واقعی (کلمهٔ ناشناس که خودش در جای دیگر سوره مچِ قوی شود) → قرمز فوری.
+ *    (این تنها خطای فوری است — دو شاهد مستقل دارد)
+ * ۷) نویز خالص ASR → هیچ.
  *
- * نتیجه: بوق فقط وقتی به صدا درمی‌آید که «قطعاً» اشتباه واقعی رخ داده است.
+ * نتیجه: بوق فقط وقتی به صدا درمی‌آید که «دو قطعهٔ مستقل» هم انحراف را تأیید کرده‌اند.
  */
 
 import {
@@ -28,7 +32,7 @@ import {
 } from "./alignment";
 
 /* ------------------------------------------------------------------ */
-/* باسمهٔ آغازین — شنیده می‌شود اما جزو آیات نیست (به‌جز سورهٔ فاتحه)      */
+/* باسمهٔ آغازین — شنیده می‌شود اما جزو آیات نیست (به‌جز فاتحه)      */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -82,6 +86,17 @@ const REAL_WORD_BAR = 0.85;
 /** عمق جستجوی عقب برای کلمهٔ واقعی (تداخل آیات) */
 const REAL_WORD_BACK = 40;
 
+/* ------------------------------------------------------------------ */
+/* شکاف‌های در انتظار تأیید                                            */
+/* ------------------------------------------------------------------ */
+
+/** شکاف [from,to) با اندیس مطلق — از روی این کلمات عبور شده اما هنوز «تأیید قطعی» نشده */
+export interface GapInfo {
+  from: number; // مطلق —inclusive
+  to: number; // مطلق — exclusive
+  at: number; // زمان شنیده‌شدن
+}
+
 export interface SeqMark {
   idx: number; // اندیس مطلق در track
   status: WordStatus;
@@ -94,16 +109,20 @@ export interface SeqResult {
   exact: number;
   fuzzy: number;
   wrong: { idx: number; expected: string; heard: string }[];
-  /** همهٔ کلمات جاافتاده */
+  /** شکاف‌های بزرگ (۳+ کلمه) — کهربایی شده و منتظر تأیید قطعهٔ بعد */
   missed: number[];
-  /** زیرمجموعهٔ بلند (پرش ۳+ کلمه/آیه‌ای) — مستحق بوق و توست */
-  missedLoud: number[];
+  /** جاافتادگی ۱-۲ کلمه‌ای — عمداً بی‌رنگ و بی‌آمار لحظه‌ای (pending مانده) */
+  softMiss: number[];
+  /** شکاف‌های تازهٔ این قطعه — caller نگه می‌دارد تا قطعهٔ بعد تأیید/تبرئه کند */
+  gaps: GapInfo[];
   /** کلمات شنیده‌شده که به هیچ کلمه‌ای نچسبیدند (نویز ASR یا کلمات خارج از بازه) */
   unknown: string[];
   /** میانگین شباهت تطبیق‌های پذیرفته‌شده 0..1 */
   quality: number;
   matchedCount: number;
   matchedAny: boolean;
+  /** اندیس مطلق اولین تطبیق این قطعه — برای منطق تأیید/تبرئهٔ شکاف قبلی */
+  firstMatchAbs: number | null;
 }
 
 function emptySeq(pos: number): SeqResult {
@@ -114,11 +133,13 @@ function emptySeq(pos: number): SeqResult {
     fuzzy: 0,
     wrong: [],
     missed: [],
-    missedLoud: [],
+    softMiss: [],
+    gaps: [],
     unknown: [],
     quality: 0,
     matchedCount: 0,
     matchedAny: false,
+    firstMatchAbs: null,
   };
 }
 
@@ -157,14 +178,20 @@ export function seqAlign(
   const marks: SeqMark[] = [];
   const wrong: SeqResult["wrong"] = [];
   const missed: number[] = [];
-  const missedLoud: number[] = [];
+  const softMiss: number[] = [];
+  const gaps: GapInfo[] = [];
   const unknown: string[] = [];
   /** کلمات ناشناس پارک‌شده — فقط اگر کلمهٔ واقعی سوره در جای دیگر باشند قرمز می‌شوند */
   const suspects: { local: number; heard: string; norm: string }[] = [];
+  let firstMatchAbs: number | null = null;
 
   const setStatus = (local: number, status: WordStatus) => {
     window[local].status = status;
     marks.push({ idx: startIdx + local, status });
+  };
+
+  const noteMatch = (local: number) => {
+    if (firstMatchAbs === null) firstMatchAbs = startIdx + local;
   };
 
   /**
@@ -205,15 +232,25 @@ export function seqAlign(
     }
   };
 
-  /** علامت‌گذاری جاافتادگی یک بلوک [from, to) */
-  const markBlockMissed = (from: number, to: number, loud: boolean) => {
+  /**
+   * علامت‌گذاری بلوک ردشدگی [from, to):
+   * — ۱-۲ کلمه: هیچ (pending می‌ماند — حذف ASR یا مکث کوتاه؛ بازبینی نهایی حساب می‌کند)
+   * — ۳+ کلمه: کهربایی ملایم + ثبت شکاف برای تأیید دومرحله‌ای (بوق اینجا ممنوع!)
+   */
+  const markSkipBlock = (from: number, to: number) => {
+    const dist = to - from;
     for (let k = from; k < to; k++) {
       const st = window[k].status;
-      if (st === "pending" || st === "active") {
+      if (st !== "pending" && st !== "active") continue;
+      if (dist > 2) {
         setStatus(k, "missed");
         missed.push(startIdx + k);
-        if (loud) missedLoud.push(startIdx + k);
+      } else {
+        softMiss.push(startIdx + k);
       }
+    }
+    if (dist > 2) {
+      gaps.push({ from: startIdx + from, to: startIdx + to, at: Date.now() });
     }
   };
 
@@ -222,6 +259,7 @@ export function seqAlign(
     else fuzzy++;
     simSum += sim;
     simCount++;
+    noteMatch(local);
     setStatus(local, "correct");
   };
 
@@ -264,19 +302,26 @@ export function seqAlign(
       fuzzy++;
       simSum += s0;
       simCount++;
+      noteMatch(cursor);
       setStatus(cursor, "correct");
       cursor += 1;
       continue;
     }
 
     // ۳) جاافتادگی: جستجوی پله‌ای ۱..۶
-    //    نزدیک (۱-۲ کلمه): آستانهٔ عادی — دور (۳-۶ کلمه): فقط تطبیق قوی + سقف ۲ بار
+    //    نزدیک (۱ کلمه): آستانهٔ عادی — دوتایی (۲ کلمه): کمی سخت‌گیرتر (تا دو موقعیت خراب نشود)
+    //    دور (۳-۶ کلمه): فقط تطبیق قوی + سقف ۲ بار
     let skipJ = -1;
     const limit = Math.min(cursor + 6, window.length - 1);
     for (let j = cursor + 1; j <= limit; j++) {
       const dist = j - cursor;
       if (dist > 2 && farSkips >= FAR_SKIP_LIMIT) break;
-      const bar = dist <= 2 ? preset.fuzzyAccept : FAR_SKIP_BAR;
+      const bar =
+        dist === 1
+          ? preset.fuzzyAccept
+          : dist === 2
+            ? Math.max(preset.fuzzyAccept, 0.74)
+            : FAR_SKIP_BAR;
       if (wordSimilarity(norm, window[j].norm) >= bar) {
         skipJ = j;
         break; // نزدیک‌ترین — نه دورترین
@@ -286,11 +331,12 @@ export function seqAlign(
       const dist = skipJ - cursor;
       // کلمات ناشناس پارک‌شدهٔ مسیر — اگر علامت نخورده‌اند جانشینی واقعی‌اند
       resolveSuspects(cursor, skipJ);
-      markBlockMissed(cursor, skipJ, dist > 2);
+      markSkipBlock(cursor, skipJ);
       if (dist > 2) farSkips++;
       simSum += 0.95;
       simCount++;
       exact++;
+      noteMatch(skipJ);
       setStatus(skipJ, "correct");
       cursor = skipJ + 1;
       continue;
@@ -313,11 +359,12 @@ export function seqAlign(
       }
       if (jFar > 0) {
         resolveSuspects(cursor, jFar);
-        markBlockMissed(cursor, jFar, true);
+        markSkipBlock(cursor, jFar);
         farSkips++;
         simSum += 1;
         simCount++;
         exact++;
+        noteMatch(jFar);
         setStatus(jFar, "correct");
         cursor = jFar + 1;
         continue;
@@ -346,11 +393,13 @@ export function seqAlign(
     fuzzy,
     wrong,
     missed,
-    missedLoud,
+    softMiss,
+    gaps,
     unknown,
     quality: simCount > 0 ? simSum / simCount : 0,
     matchedCount,
     matchedAny: matchedCount > 0,
+    firstMatchAbs,
   };
 }
 

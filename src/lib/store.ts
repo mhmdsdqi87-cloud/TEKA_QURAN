@@ -9,7 +9,7 @@ import {
   type MistakeEvent,
   type TrackWord,
 } from "@/lib/alignment";
-import { seqAlign, seqScore, stripOpeningBasmala } from "@/lib/sequencer";
+import { seqAlign, seqScore, stripOpeningBasmala, type GapInfo } from "@/lib/sequencer";
 import { useSettings } from "@/lib/settings";
 
 export interface AyahLite {
@@ -88,12 +88,38 @@ let msgCounter = 0;
  */
 let unknownStreak = 0;
 
+/**
+ * شکاف‌های در انتظار تأیید — از روی این کلمات عبور شده اما «قطعهٔ بعدی»
+ * باید عبور را تأیید کند تا هشدار صوتی مجاز شود (تأیید دومرحله‌ای = صفر بوق کاذب).
+ */
+let pendingGaps: GapInfo[] = [];
+
+/** آیه‌هایی که مربی زنده برایشان پیام داده — هر دور تکرار یک‌بار */
+let coachedAyahs = new Set<number>();
+
+/** کول‌داون هشدار صوتی — ضد «بوق پشت‌سرهم» */
+const ALERT_COOLDOWN_MS = 5000;
+let lastAlertAt = 0;
+
+/** آیا الان مجاز به هشدار صوتی/لرزش هستیم؟ (با کول‌داون ۵ ثانیه‌ای) */
+export function shouldAlertNow(): boolean {
+  const now = Date.now();
+  if (now - lastAlertAt < ALERT_COOLDOWN_MS) return false;
+  lastAlertAt = now;
+  return true;
+}
+
 /** سقف پیام‌های بازخورد — جلوگیری از شلوغی/کندی رابط در جلسه‌های بلند */
 const FEEDBACK_CAP = 60;
 
 function appendFeedback(list: FeedbackMsg[], msg: FeedbackMsg): FeedbackMsg[] {
   const next = [...list, msg];
   return next.length > FEEDBACK_CAP ? next.slice(next.length - FEEDBACK_CAP) : next;
+}
+
+/** ارقام فارسی برای پیام‌ها */
+function fa(n: number): string {
+  return String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 }
 
 const emptyState = {
@@ -124,6 +150,9 @@ export const useStudio = create<StudioState>((set, get) => ({
   setRange: (surah, from, to, ayahs) => {
     const track = buildTrack(ayahs, from);
     unknownStreak = 0;
+    pendingGaps = [];
+    coachedAyahs = new Set();
+    lastAlertAt = 0;
     set({
       surah,
       fromAyah: from,
@@ -217,6 +246,8 @@ export const useStudio = create<StudioState>((set, get) => ({
       const repCfg = useSettings.getState().repeatRounds;
       if (repCfg > 0 && s.roundsLeft > 0) {
         const fresh = s.track.map((w) => ({ ...w, status: "pending" as const }));
+        pendingGaps = [];
+        coachedAyahs = new Set();
         set({
           track: fresh,
           pos: 0,
@@ -275,6 +306,64 @@ export const useStudio = create<StudioState>((set, get) => ({
 
     const fb: FeedbackMsg[] = [...s.feedback];
     let heardSegments = [...s.heardSegments, heard];
+    const newMistakes: MistakeEvent[] = [];
+
+    // ——— تأیید/تبرئهٔ شکاف‌های قطعه‌های قبلی (تأیید دومرحله‌ای) ———
+    // بوق فقط همین‌جا مجاز است: وقتی «دو قطعهٔ مستقل» عبور از ناحیه را تأیید کرده‌اند.
+    const fm = res.firstMatchAbs;
+    const confirmable = fm !== null && res.matchedCount >= 2;
+    if (pendingGaps.length > 0) {
+      const keep: GapInfo[] = [];
+      for (const g of pendingGaps) {
+        if (confirmable && fm !== null && fm >= g.to + 2) {
+          // تأیید قطعی — شکاف واقعی بود؛ حالا رویداد خطا (با بوق) ثبت می‌شود
+          for (let k = g.from; k < g.to && k < track.length; k++) {
+            if (track[k].status === "missed") {
+              newMistakes.push({
+                type: "missed",
+                ayahIdx: track[k].ayahIdx,
+                ayahNumber: s.ayahs[track[k].ayahIdx]?.n ?? 0,
+                expected: track[k].text,
+                at: Date.now(),
+                mild: false,
+              });
+            }
+          }
+          const gCount = Math.min(g.to, track.length) - g.from;
+          fb.push({
+            id: `m${++msgCounter}`,
+            kind: "mistake",
+            text: `تأیید شد: از روی ${fa(gCount)} کلمه رد شدی (از «${
+              track[Math.min(g.from, track.length - 1)]?.text ?? "?"
+            }» تا «${track[Math.min(g.to - 1, track.length - 1)]?.text ?? "?"}»).`,
+            detail: "اگر می‌خواهی تثبیت شود، آن کلمات را یک‌بار دیگر بخوان.",
+            at: Date.now(),
+          });
+          continue;
+        }
+        if (fm !== null && fm < g.to) {
+          // تبرئه — کاربر به همان ناحیه برگشت (تکرار) یا ASR با تأخیر چسباند
+          let reverted = 0;
+          for (let k = g.from; k < g.to && k < track.length; k++) {
+            if (track[k].status === "missed") {
+              track[k].status = "pending";
+              reverted++;
+            }
+          }
+          if (reverted > 0) {
+            fb.push({
+              id: `m${++msgCounter}`,
+              kind: "info",
+              text: "خیالت راحت — کلمات قبلی تبرئه شدند؛ از همین‌جا ادامه بده.",
+              at: Date.now(),
+            });
+          }
+          continue;
+        }
+        keep.push(g);
+      }
+      pendingGaps = keep;
+    }
 
     // ——— تکرار آیه: اگر هیچ‌کدام جلو نچسبید، ببین آیا عقب‌تر (آیه‌ای که رد شده) مچ می‌شود ———
     // تکرار هرگز نشانگر را جابه‌جا نمی‌کند (رفع «می‌پره»)
@@ -296,7 +385,8 @@ export const useStudio = create<StudioState>((set, get) => ({
     }
 
     const stats = computeAccuracy(track);
-    const newMistakes: MistakeEvent[] = [];
+
+    // خطای جانشینی واقعی — فوری است (دو شاهد مستقل دارد: گاربل نچسبید + کلمه در جای دیگر سوره مچ شد)
     for (const w of res.wrong) {
       newMistakes.push({
         type: "wrong",
@@ -307,38 +397,29 @@ export const useStudio = create<StudioState>((set, get) => ({
         at: Date.now(),
       });
     }
-    // نویز ASR هرگز خطا نیست — فقط جاافتادگی‌های واقعی ثبت می‌شوند؛
-    // جاافتادگی ۱-۲ کلمه‌ای (عمدتاً حذف ASR) «ملایم» است: در آمار می‌ماند اما بوق/توست ندارد
-    for (const idx of res.missed) {
-      newMistakes.push({
-        type: "missed",
-        ayahIdx: track[idx].ayahIdx,
-        ayahNumber: s.ayahs[track[idx].ayahIdx]?.n ?? 0,
-        expected: track[idx].text,
+    // جاافتادگی‌های قطعهٔ فعلی «هنوز رویداد خطا نیستند» — منتظر تأیید قطعهٔ بعد؛
+    // فقط پیام ملایم بدون بوق/توست (شکاف‌های بزرگ کهربایی شده‌اند)
+    if (res.gaps.length > 0) {
+      pendingGaps.push(...res.gaps);
+      if (pendingGaps.length > 6) pendingGaps = pendingGaps.slice(-6);
+      fb.push({
+        id: `m${++msgCounter}`,
+        kind: "info",
+        text: "چند کلمهٔ پیوسته رو کامل نشنیدم — اگه خوندی‌شون مشکلی نیست، ادامه بده؛ چند ثانیه بعد تأیید می‌کنم.",
         at: Date.now(),
-        mild: !res.missedLoud.includes(idx),
       });
     }
 
     fb.push({ id: `m${++msgCounter}`, kind: "heard", text: heard, at: Date.now() });
 
-    // پیام متنی فقط برای خطاهای قطعی (نه ملایم) — ضد اسپم
+    // پیام متنی فقط برای خطای قطعی جانشینی — ضد اسپم
     if (res.wrong.length > 0) {
       const w = res.wrong[0];
       fb.push({
         id: `m${++msgCounter}`,
         kind: "mistake",
-        text: `خطا در آیهٔ ${s.ayahs[track[w.idx].ayahIdx]?.n ?? "?"}: به‌جای «${w.expected}» شنیدم «${w.heard}»`,
+        text: `خطا در آیهٔ ${fa(s.ayahs[track[w.idx].ayahIdx]?.n ?? 0)}: به‌جای «${w.expected}» شنیدم «${w.heard}»`,
         detail: "کلمهٔ درست را با رنگ سرخ در متن می‌بینی.",
-        at: Date.now(),
-      });
-    }
-    if (res.missedLoud.length > 0) {
-      const first = res.missedLoud[0];
-      fb.push({
-        id: `m${++msgCounter}`,
-        kind: "mistake",
-        text: `پرش در آیهٔ ${s.ayahs[track[first].ayahIdx]?.n ?? "?"}: از روی «${track[first].text}» رد شدی.`,
         at: Date.now(),
       });
     }
@@ -351,6 +432,42 @@ export const useStudio = create<StudioState>((set, get) => ({
       });
     }
 
+    // ——— مربی زندهٔ آیه‌ای: وقتی آیه‌ای کامل شد، تحلیل همان‌جا ———
+    // (قانون‌محور و لحظه‌ای؛ تحلیل کامل LLM در پایان جلسه انجام می‌شود)
+    if (res.newCursor > s.pos) {
+      for (let ai = 0; ai < s.ayahs.length; ai++) {
+        if (coachedAyahs.has(ai)) continue;
+        let endIdx = -1;
+        let total = 0;
+        let good = 0;
+        for (let i = 0; i < track.length; i++) {
+          if (track[i].ayahIdx === ai) {
+            total++;
+            if (i > endIdx) endIdx = i;
+            if (track[i].status === "correct") good++;
+          }
+        }
+        if (endIdx >= 0 && total > 0 && res.newCursor > endIdx) {
+          coachedAyahs.add(ai);
+          if (good === total) {
+            fb.push({
+              id: `m${++msgCounter}`,
+              kind: "praise",
+              text: `آیهٔ ${fa(s.ayahs[ai].n)} کامل و بی‌نقص — ماشاءالله! اتصالش با آیهٔ بعد هم محکم است.`,
+              at: Date.now(),
+            });
+          } else if (good >= Math.ceil(total * 0.6)) {
+            fb.push({
+              id: `m${++msgCounter}`,
+              kind: "info",
+              text: `آیهٔ ${fa(s.ayahs[ai].n)} تمام شد ولی ${fa(total - good)} کلمه‌اش نچسبید — قبل از ادامه، یک‌بار دیگر مرورش کن.`,
+              at: Date.now(),
+            });
+          }
+        }
+      }
+    }
+
     // ——— خودهمگام‌سازی: اگر پیاپی کلمه‌ای نچسبید (گیر کردن پیگیری)،
       // کل شنیده‌های جلسه را یک‌جا با بازه هم‌تراز کن تا نشانگر به جای درست برگردد ———
     unknownStreak = res.matchedCount > 0 ? 0 : unknownStreak + res.unknown.length;
@@ -358,6 +475,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       const heardAll = heardSegments.join(" ");
       const swept = fullResweep(track, heardAll, preset);
       unknownStreak = 0;
+      pendingGaps = []; // همگام‌سازی سراسری — شکاف‌های معوق بی‌معنا شدند
       const st2 = swept !== track ? computeAccuracy(swept) : null;
       // محافظ صفرخطا: هم‌ترازی سراسری فقط اگر وضعیت را بدتر نکند اعمال می‌شود
       if (swept !== track && st2 && st2.accuracy >= stats.accuracy - 2) {
@@ -430,6 +548,7 @@ export const useStudio = create<StudioState>((set, get) => ({
             for (let i = 0; i < swept.length; i++) {
               if (swept[i].status !== "pending") newPos = i + 1;
             }
+            pendingGaps = [];
             return {
               track: swept,
               pos: Math.max(newPos, s.pos),
@@ -449,11 +568,15 @@ export const useStudio = create<StudioState>((set, get) => ({
           }
         }
       }
+      pendingGaps = [];
       return { phase: "review" as const };
     }),
 
   reset: () => {
     unknownStreak = 0;
+    pendingGaps = [];
+    coachedAyahs = new Set();
+    lastAlertAt = 0;
     set(emptyState);
   },
 
@@ -461,6 +584,7 @@ export const useStudio = create<StudioState>((set, get) => ({
     set((s) => {
       if (wordIdx < 0 || wordIdx > s.track.length) return {};
       unknownStreak = 0; // همگام‌سازی دستی کاربر — اعتماد تازه
+      pendingGaps = []; // کاربر خودش نشانگر را جابه‌جا کرد — شکاف‌های معوق منتفی
       const track = s.track.map((w, i) => ({
         ...w,
         status: i < wordIdx && w.status === "pending" ? ("missed" as const) : w.status,

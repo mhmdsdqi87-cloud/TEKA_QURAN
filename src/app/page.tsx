@@ -8,6 +8,7 @@ import PracticeMode from "@/components/practice-mode";
 import TestMode from "@/components/test-mode";
 import StatsPanel from "@/components/stats-panel";
 import FeaturesSection from "@/components/features-section";
+import AboutSection from "@/components/about-section";
 import SiteFooter from "@/components/site-footer";
 import AuthDialog from "@/components/auth-dialog";
 import ChatWidget from "@/components/chat-widget";
@@ -66,6 +67,8 @@ export default function Home() {
           </section>
 
           <FeaturesSection />
+
+          <AboutSection />
         </div>
       </main>
 

@@ -105,6 +105,31 @@ function stripEl(w: string): string {
   return w;
 }
 
+/**
+ * پسوندهای ضمیر/جمع/مالکیت که ASR عربی اغلب جابه‌جا یا جا می‌اندازد:
+ * كتاب → كتابهم / كتابها / كتابكم ...
+ * (همه به شکل نرمال‌شده — بعد از normalizeArabic)
+ */
+const STEMS_SUFFIXES = ["اتهم", "اتها", "اتنا", "هم", "هن", "ها", "نا", "كم", "تم", "تن", "ون"] as const;
+
+/** ساقهٔ مورفولوژیک کلمه — حذف «ال» و پسوندهای ضمیر برای مقایسهٔ عادلانهٔ دو طرف */
+export function stemOf(w: string): string {
+  let s = stripEl(w);
+  // حداکثر دو پسوند پشت‌سرهم (مثل «بكتابهم» → كتاب)
+  for (let round = 0; round < 2; round++) {
+    const before = s;
+    for (const suf of STEMS_SUFFIXES) {
+      // ساقهٔ باقی‌مانده باید حداقل ۳ حرف باشد تا کلمهٔ کوتاه بی‌جهت لخت نشود
+      if (s.endsWith(suf) && s.length - suf.length >= 3) {
+        s = s.slice(0, -suf.length);
+        break;
+      }
+    }
+    if (s === before) break;
+  }
+  return s;
+}
+
 function canonWord(w: string): string {
   return CANON[w] ?? w;
 }
@@ -190,6 +215,22 @@ export function wordSimilarity(a: string, b: string): number {
         const l2 = lcsLength(sa, sb);
         if (l2 >= 3) best = Math.max(best, (l2 / maxLen2) * 0.92);
       }
+    }
+  }
+
+  // ——— مورفولوژی: ساقهٔ مشترک = همان کلمه با ضمیر متفاوت ———
+  // كتاب ↔ كتابهم، نصر ↔ ينصرون... ASR ضمیرها را خراب می‌کند؛ این مسیر
+  // کلمهٔ درستِ کاربر را نجات می‌دهد (صفر خطای کاذب).
+  if (best < 0.9) {
+    const stA = stemOf(a);
+    const stB = stemOf(b);
+    if (stA === stB && stA.length >= 3) {
+      best = Math.max(best, 0.93);
+    } else if (stA.length >= 4 && stB.length >= 4) {
+      // ساقه‌ها با گاربل هم تقریبی‌اند (ASR هم حرف جابه‌جا می‌کند هم ضمیر می‌چسباند)
+      const maxStem = Math.max(stA.length, stB.length);
+      const stemSim = 1 - levenshtein(stA, stB, Math.ceil(maxStem / 2) + 1) / maxStem;
+      if (stemSim > 0) best = Math.max(best, stemSim * 0.94);
     }
   }
   return Math.min(1, best);

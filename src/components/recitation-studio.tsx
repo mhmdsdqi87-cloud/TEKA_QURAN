@@ -42,13 +42,15 @@ import { RecitationRecorder, listMicrophones } from "@/lib/recorder";
 import { SpeechEngine, isBrowserSpeechSupported } from "@/lib/speech";
 import { getHafezUid } from "@/lib/user";
 import { useAuth } from "@/lib/auth-store";
-import { useStudio, type AyahLite, type SurahLite } from "@/lib/store";
+import { useStudio, shouldAlertNow, type AyahLite, type SurahLite } from "@/lib/store";
 import {
   useSettings,
+  ASR_LANG_LABELS,
   ERROR_ALERT_LABELS,
   REPEAT_ROUNDS_LABELS,
   STRICTNESS_LABELS,
   TEXT_SIZE_LABELS,
+  type AsrLang,
   type ErrorAlert,
   type Strictness,
   type TextSize,
@@ -64,6 +66,28 @@ interface AnalyzeResult {
   plan?: string[];
   mistakes: { ayahNumber: number; kind: string; expected: string; heard: string; note: string }[];
   fallback?: boolean;
+}
+
+/** آمار هر آیه — برای چیپ‌های بازبینی و تحلیل معلم */
+interface AyahStat {
+  n: number;
+  total: number;
+  correct: number;
+  bad: number;
+  missed: number;
+}
+
+function perAyahStats(ayahs: AyahLite[], track: { ayahIdx: number; status: string }[]): AyahStat[] {
+  const acc = ayahs.map((a) => ({ n: a.n, total: 0, correct: 0, bad: 0, missed: 0 }));
+  for (const w of track) {
+    const row = acc[w.ayahIdx];
+    if (!row) continue;
+    row.total++;
+    if (w.status === "correct") row.correct++;
+    else if (w.status === "wrong") row.bad++;
+    else if (w.status === "missed") row.missed++;
+  }
+  return acc;
 }
 
 /** نشانک ادامهٔ حفظ — آخرین بازهٔ تلاوت کاربر (localStorage) */
@@ -405,8 +429,9 @@ export default function RecitationStudio() {
       const useBrowser = isBrowserSpeechSupported();
       if (useBrowser) {
         // موتور اصلی: تشخیص گفتار مرورگر — زنده و کلمه‌به‌کلمه با گزینه‌های جایگزین
+        // (لهجهٔ ASR از تنظیمات کاربر — بعضی دستگاه‌ها با لهجهٔ دیگر بهتر می‌شنوند)
         const engine = new SpeechEngine({
-          lang: "ar-SA",
+          lang: useSettings.getState().asrLang,
           onInterim: (text) => {
             const now = performance.now();
             if (now - lastPreviewAtRef.current < previewThrottleRef.current) return;
@@ -515,6 +540,33 @@ export default function RecitationStudio() {
     setAnalysis(null);
   }, [st.surah, st.fromAyah, st.toAyah, loadRange]);
 
+  /* ---------- تمرین هدفمند آیهٔ ضعیف — از کارت بازبینی ---------- */
+  const practiceWeakAyahs = useCallback(() => {
+    if (!st.surah || st.ayahs.length === 0) return;
+    const stats = perAyahStats(st.ayahs, st.track);
+    const weak = stats
+      .filter((s) => s.bad + s.missed > 0)
+      .sort(
+        (a, b) =>
+          (b.bad + b.missed) / Math.max(1, b.total) - (a.bad + a.missed) / Math.max(1, a.total)
+      )[0];
+    if (!weak) {
+      toast({ title: "آیهٔ ضعیفی نیست — ماشاءالله!", description: "کل بازه تمیز خونده شده؛ سراغ بازهٔ بلندتر برو." });
+      return;
+    }
+    setAnalysis(null);
+    savedRef.current = false;
+    setSaved(false);
+    setSelSurah(String(st.surah.n));
+    setSelFrom(String(weak.n));
+    setSelTo(String(weak.n));
+    void loadRange(st.surah.n, weak.n, weak.n);
+    toast({
+      title: `تمرین هدفمند آیهٔ ${toFa(weak.n)}`,
+      description: "همین آیه را چند بار بخوان تا محکم بشه؛ بعد برگرده و کل بازه رو تلاوت کن.",
+    });
+  }, [st.surah, st.ayahs, st.track, loadRange, toast]);
+
   /* ---------- پایان خودکار ---------- */
   const finishedAll = track.length > 0 && pos >= track.length;
   useEffect(() => {
@@ -539,6 +591,8 @@ export default function RecitationStudio() {
       const last = mistakes[mCount - 1];
       // خطاهای ملایم (جاافتادگی ۱-۲ کلمه‌ای = معمولاً حذف ASR) هیچ هشدار لحظه‌ای ندارند — ضد بوق‌های کاذب
       if (last?.mild) return;
+      // کول‌داون ۵ ثانیه‌ای — حتی خطای تأییدشده هم نباید پشت‌سرهم بوق بزند
+      if (!shouldAlertNow()) return;
       setFlash((f) => f + 1);
       if (cfg.sounds) {
         if (cfg.errorAlert === "all") {
@@ -588,6 +642,8 @@ export default function RecitationStudio() {
         expected: m.expected,
         heard: m.heard,
       }));
+      // آمار آیه‌به‌آیه — معلم با این جدول آیه‌های ضعیف را دقیق ریشه‌یابی می‌کند
+      const perAyah = perAyahStats(st.ayahs, st.track);
       const [anRes, svRes] = await Promise.allSettled([
         fetch("/api/analyze", {
           method: "POST",
@@ -598,6 +654,7 @@ export default function RecitationStudio() {
             heard,
             mistakes: mistakeSummary,
             accuracy: st.accuracy,
+            perAyah,
           }),
         }).then((r) => r.json() as Promise<AnalyzeResult>),
         fetch("/api/sessions", {
@@ -655,8 +712,9 @@ export default function RecitationStudio() {
   }, [stopWatchdog]);
 
   const progressPct = wordsTotal > 0 ? Math.min(100, Math.round((pos / wordsTotal) * 100)) : 0;
-  const wrongCount = mistakes.filter((m) => m.type === "wrong").length;
-  const missedCount = mistakes.filter((m) => m.type === "missed").length;
+  // آمار زنده از وضعیت خود کلمات (نه فقط رویدادها) — منبع واحد حقیقت
+  const wrongCount = track.filter((w) => w.status === "wrong").length;
+  const missedCount = track.filter((w) => w.status === "missed").length;
   const insertedCount = mistakes.filter((m) => m.type === "inserted").length;
 
   const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
@@ -1032,6 +1090,30 @@ export default function RecitationStudio() {
                   <span>✗ {toFa(wrongCount)} اشتباه</span>
                   <span>— {toFa(missedCount)} جاافتاده</span>
                 </div>
+                {/* چیپ‌های آیه‌به‌آیه — نقشهٔ حرارتی حفظ */}
+                {st.ayahs.length > 1 && (
+                  <div className="flex max-w-56 flex-wrap justify-center gap-1" aria-label="دقت هر آیه">
+                    {perAyahStats(st.ayahs, st.track).map((a) => {
+                      const perfect = a.total > 0 && a.correct === a.total;
+                      const weakChip = a.bad + a.missed > 0;
+                      return (
+                        <span
+                          key={a.n}
+                          title={`آیهٔ ${a.n}: ${a.correct} از ${a.total} کلمه درست`}
+                          className={`rounded-md border px-1.5 py-0.5 text-[10px] font-bold ${
+                            perfect
+                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                              : weakChip
+                                ? "border-red-500/40 bg-red-500/10 text-red-500"
+                                : "border-gold/40 bg-gold/10 text-gold"
+                          }`}
+                        >
+                          {toFa(a.n)}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
                 <p className="text-[11px] text-muted-foreground">
                   {saved ? "جلسه ذخیره شد ✓" : "جلسه ذخیره نشد"}
                 </p>
@@ -1109,6 +1191,14 @@ export default function RecitationStudio() {
                   >
                     <RotateCcw className="size-4" aria-hidden="true" />
                     تلاوت مجدد
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={practiceWeakAyahs}
+                    className="rounded-xl border-gold/40 font-bold hover:bg-gold/10"
+                  >
+                    <Target className="size-4" aria-hidden="true" />
+                    تمرین آیهٔ ضعیف
                   </Button>
                   <Button
                     variant="outline"
@@ -1245,6 +1335,18 @@ function StudioSettingsCard() {
             {/* دقت تشخیص */}
             <div className="space-y-3">
               <SettingsSectionTitle>دقت تشخیص</SettingsSectionTitle>
+              <SettingRow label="زبان تشخیص گفتار" hint="اگر تلاوتت خوب شنیده نمی‌شود، لهجهٔ دیگر را امتحان کن">
+                <Select value={cfg.asrLang} onValueChange={(v) => update("asrLang", v as AsrLang)}>
+                  <SelectTrigger className="w-44 rounded-lg" aria-label="زبان تشخیص گفتار">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(ASR_LANG_LABELS) as AsrLang[]).map((k) => (
+                      <SelectItem key={k} value={k}>{ASR_LANG_LABELS[k]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingRow>
               <SettingRow label="سخت‌گیری تطبیق" hint={STRICTNESS_LABELS[cfg.strictness].hint}>
                 <Select value={cfg.strictness} onValueChange={(v) => update("strictness", v as Strictness)}>
                   <SelectTrigger className="w-28 rounded-lg" aria-label="سخت‌گیری تطبیق">

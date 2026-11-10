@@ -9,6 +9,8 @@ import { persist } from "zustand/middleware";
 export type ErrorAlert = "all" | "beep" | "vibrate" | "silent";
 export type Strictness = "lenient" | "normal" | "strict";
 export type TextSize = "sm" | "md" | "lg";
+/** لهجهٔ تشخیص گفتار — بعضی دستگاه‌ها با لهجهٔ دیگر بهتر تلاوت فارسی‌زبان‌ها را می‌شنوند */
+export type AsrLang = "ar-SA" | "ar-EG" | "ar-AE" | "ar-IQ" | "ar-KW";
 
 export interface StudioSettings {
   /** صداهای برنامه (بوق خطا، تشویق، شمارش معکوس) */
@@ -37,6 +39,8 @@ export interface StudioSettings {
   textSize: TextSize;
   /** تکرار خودکار بازه پس از پایان (۰ = خاموش) — تثبیت حفظ */
   repeatRounds: number;
+  /** زبان/لهجهٔ موتور تشخیص گفتار */
+  asrLang: AsrLang;
 }
 
 export const defaultSettings: StudioSettings = {
@@ -53,6 +57,7 @@ export const defaultSettings: StudioSettings = {
   countdown: true,
   textSize: "md",
   repeatRounds: 0,
+  asrLang: "ar-SA",
 };
 
 interface SettingsState extends StudioSettings {
@@ -95,4 +100,12 @@ export const REPEAT_ROUNDS_LABELS: Record<string, string> = {
   "1": "۱ دور تکرار",
   "2": "۲ دور تکرار",
   "3": "۳ دور تکرار",
+};
+
+export const ASR_LANG_LABELS: Record<AsrLang, string> = {
+  "ar-SA": "عربی — عربستان (پیشنهادی)",
+  "ar-EG": "عربی — مصر",
+  "ar-AE": "عربی — امارات",
+  "ar-IQ": "عربی — عراق",
+  "ar-KW": "عربی — کویت",
 };
